@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(name = "claude-history-viewer")]
+#[command(name = "claude-history")]
 #[command(about = "View Claude conversation history with fuzzy search")]
 pub struct Args {
     /// Hide tool calls from the output
