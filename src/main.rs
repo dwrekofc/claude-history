@@ -3,7 +3,6 @@ mod cli;
 mod config;
 mod display;
 mod error;
-mod filters;
 mod fzf;
 mod history;
 

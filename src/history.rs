@@ -1,6 +1,5 @@
 use crate::claude::{LogEntry, extract_text_from_assistant, extract_text_from_user};
 use crate::error::{AppError, Result};
-use crate::filters;
 use chrono::{DateTime, Local};
 use std::fs::{File, read_dir};
 use std::io::{BufRead, BufReader};
@@ -77,9 +76,11 @@ fn process_conversation_file(path: PathBuf, show_last: bool) -> Result<Option<Co
     let reader = BufReader::new(file);
 
     let mut all_parts = Vec::new();
+    let mut preview_parts = Vec::new();
     let mut user_messages = Vec::new();
     let mut first_timestamp: Option<DateTime<Local>> = None;
-    let mut prev_was_warmup_user = false;
+    let mut seen_real_user_message = false;
+    let mut skip_next_assistant = false;
 
     for line in reader.lines() {
         let line = line?;
@@ -88,20 +89,6 @@ fn process_conversation_file(path: PathBuf, show_last: bool) -> Result<Option<Co
         }
 
         if let Ok(entry) = serde_json::from_str::<LogEntry>(&line) {
-            // Check if this is a warmup user message
-            if filters::is_warmup_user(&entry) {
-                prev_was_warmup_user = true;
-                continue; // Skip warmup user message
-            }
-
-            // Check if this is a warmup assistant message following a warmup user
-            if prev_was_warmup_user && filters::is_warmup_assistant(&entry) {
-                prev_was_warmup_user = false;
-                continue; // Skip warmup assistant message
-            }
-
-            prev_was_warmup_user = false;
-
             // Capture timestamp from first user or assistant message
             if first_timestamp.is_none() {
                 let timestamp_str = match &entry {
@@ -123,13 +110,29 @@ fn process_conversation_file(path: PathBuf, show_last: bool) -> Result<Option<Co
                     let text = extract_text_from_user(&message);
                     if !text.is_empty() {
                         all_parts.push(text.clone());
-                        user_messages.push(text);
+                        user_messages.push(text.clone());
+
+                        // Check if this is a warmup message (first user message is "Warmup")
+                        if !seen_real_user_message && text.trim() == "Warmup" {
+                            skip_next_assistant = true;
+                        } else {
+                            preview_parts.push(text);
+                            seen_real_user_message = true;
+                        }
                     }
                 }
                 LogEntry::Assistant { message, .. } => {
                     let text = extract_text_from_assistant(&message);
                     if !text.is_empty() {
-                        all_parts.push(text);
+                        all_parts.push(text.clone());
+
+                        // Skip this assistant message if it follows a warmup user message
+                        if skip_next_assistant {
+                            skip_next_assistant = false;
+                        } else if seen_real_user_message {
+                            // Only add assistant messages to preview after we've seen a real user message
+                            preview_parts.push(text);
+                        }
                     }
                 }
                 _ => {}
@@ -137,16 +140,20 @@ fn process_conversation_file(path: PathBuf, show_last: bool) -> Result<Option<Co
         }
     }
 
-    // Check if this is a clear-only conversation
-    if is_clear_only_conversation(&user_messages) || all_parts.is_empty() {
+    // Check if this is a clear-only conversation or if preview is empty after filtering
+    if is_clear_only_conversation(&user_messages)
+        || all_parts.is_empty()
+        || preview_parts.is_empty()
+    {
         return Ok(None);
     }
 
     let timestamp = first_timestamp.unwrap_or_else(Local::now);
 
     // Create preview (first or last 3 messages)
+    // Skip leading assistant messages by using preview_parts instead of all_parts
     let preview = if show_last {
-        all_parts
+        preview_parts
             .iter()
             .rev()
             .take(3)
@@ -154,7 +161,7 @@ fn process_conversation_file(path: PathBuf, show_last: bool) -> Result<Option<Co
             .collect::<Vec<_>>()
             .join(" ... ")
     } else {
-        all_parts
+        preview_parts
             .iter()
             .take(3)
             .cloned()
