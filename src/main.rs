@@ -28,6 +28,24 @@ fn main() {
     }
 }
 
+/// Helper function to resolve a boolean setting by merging CLI flags and config values.
+///
+/// Priority: enable_flag > disable_flag > config_value > default_value
+fn resolve_bool_setting(
+    enable_flag: bool,
+    disable_flag: bool,
+    config_value: Option<bool>,
+    default_value: bool,
+) -> bool {
+    if enable_flag {
+        true
+    } else if disable_flag {
+        false
+    } else {
+        config_value.unwrap_or(default_value)
+    }
+}
+
 fn run() -> Result<()> {
     let args = Args::parse();
     let config = config::load_config()?;
@@ -58,27 +76,39 @@ fn run() -> Result<()> {
 
     // Merge CLI arguments with config file settings. CLI takes precedence.
     let display_config = config.display.unwrap_or_default();
-    let no_tools = args.no_tools > 0 || display_config.no_tools.unwrap_or(false);
-    let last = args.last > 0 || display_config.last.unwrap_or(false);
-    let relative_time = args.relative_time > 0 || display_config.relative_time.unwrap_or(false);
+
+    // Use positive names internally for clarity
+    let show_tools = resolve_bool_setting(
+        args.show_tools,
+        args.no_tools,
+        display_config.no_tools.map(|b| !b),
+        true,
+    );
+    let show_last = resolve_bool_setting(args.last, args.first, display_config.last, false);
+    let use_relative_time = resolve_bool_setting(
+        args.relative_time,
+        args.absolute_time,
+        display_config.relative_time,
+        false,
+    );
 
     // Load all conversations (reads each file once)
-    let conversations = history::load_conversations(&projects_dir, last)?;
+    let conversations = history::load_conversations(&projects_dir, show_last)?;
 
     if conversations.is_empty() {
         return Err(AppError::NoHistoryFound(projects_dir.display().to_string()));
     }
 
     // Use fzf to select a conversation
-    let selected_path = fzf::select_conversation(&conversations, relative_time)?;
+    let selected_path = fzf::select_conversation(&conversations, use_relative_time)?;
 
     if args.resume {
         resume_with_claude(&selected_path)?;
         return Ok(());
     }
 
-    // Display the selected conversation
-    display::display_conversation(&selected_path, no_tools)?;
+    // Display the selected conversation (pass the negative form)
+    display::display_conversation(&selected_path, !show_tools)?;
 
     Ok(())
 }

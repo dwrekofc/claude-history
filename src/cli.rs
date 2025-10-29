@@ -1,17 +1,16 @@
-use clap::{ArgAction, Parser};
+use clap::Parser;
 
 #[derive(Parser, Debug)]
 #[command(name = "claude-history")]
 #[command(about = "View Claude conversation history with fuzzy search")]
 pub struct Args {
-    /// Hide tool calls from the output
-    #[arg(
-        long,
-        short = 't',
-        help = "Hide tool calls from the conversation output. Overrides config.",
-        action = ArgAction::Count,
-    )]
-    pub no_tools: u8,
+    /// Hide tool calls from the conversation output
+    #[arg(long, short = 't', group = "tools_display")]
+    pub no_tools: bool,
+
+    /// Force display of tool calls from the conversation output
+    #[arg(long, group = "tools_display")]
+    pub show_tools: bool,
 
     /// Show the conversation directory and exit
     #[arg(
@@ -21,23 +20,21 @@ pub struct Args {
     )]
     pub show_dir: bool,
 
-    /// Show last messages in preview instead of first messages
-    #[arg(
-        long,
-        short = 'l',
-        help = "Show the last messages in the fuzzy finder preview. Overrides config.",
-        action = ArgAction::Count,
-    )]
-    pub last: u8,
+    /// Show the last messages in the fuzzy finder preview
+    #[arg(long, short = 'l', group = "preview_content")]
+    pub last: bool,
 
-    /// Show relative time (e.g. \"10 minutes ago\") instead of timestamp
-    #[arg(
-        long,
-        short = 'r',
-        help = "Display relative time instead of absolute timestamp. Overrides config.",
-        action = ArgAction::Count,
-    )]
-    pub relative_time: u8,
+    /// Show the first messages in the fuzzy finder preview
+    #[arg(long, group = "preview_content")]
+    pub first: bool,
+
+    /// Display relative time (e.g. "10 minutes ago")
+    #[arg(long, short = 'r', group = "time_display")]
+    pub relative_time: bool,
+
+    /// Display absolute timestamp
+    #[arg(long, group = "time_display")]
+    pub absolute_time: bool,
 
     /// Resume the selected conversation in the Claude CLI
     #[arg(
