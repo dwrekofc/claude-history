@@ -150,7 +150,6 @@ fn process_conversation_file(path: PathBuf, show_last: bool) -> Result<Option<Co
             .iter()
             .rev()
             .take(3)
-            .rev()
             .cloned()
             .collect::<Vec<_>>()
             .join(" ... ")
