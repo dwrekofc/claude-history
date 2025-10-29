@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 #[derive(Parser, Debug)]
 #[command(name = "claude-history")]
@@ -8,9 +8,10 @@ pub struct Args {
     #[arg(
         long,
         short = 't',
-        help = "Hide tool calls from the conversation output"
+        help = "Hide tool calls from the conversation output. Overrides config.",
+        action = ArgAction::Count,
     )]
-    pub no_tools: bool,
+    pub no_tools: u8,
 
     /// Show the conversation directory and exit
     #[arg(
@@ -24,17 +25,19 @@ pub struct Args {
     #[arg(
         long,
         short = 'l',
-        help = "Show the last messages in the fuzzy finder preview"
+        help = "Show the last messages in the fuzzy finder preview. Overrides config.",
+        action = ArgAction::Count,
     )]
-    pub last: bool,
+    pub last: u8,
 
     /// Show relative time (e.g. \"10 minutes ago\") instead of timestamp
     #[arg(
         long,
         short = 'r',
-        help = "Display relative time instead of absolute timestamp"
+        help = "Display relative time instead of absolute timestamp. Overrides config.",
+        action = ArgAction::Count,
     )]
-    pub relative_time: bool,
+    pub relative_time: u8,
 
     /// Resume the selected conversation in the Claude CLI
     #[arg(

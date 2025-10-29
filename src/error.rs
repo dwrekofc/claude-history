@@ -28,6 +28,9 @@ pub enum AppError {
 
     #[error("Failed to run Claude CLI: {0}")]
     ClaudeExecutionError(String),
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }
 
 pub type Result<T> = std::result::Result<T, AppError>;

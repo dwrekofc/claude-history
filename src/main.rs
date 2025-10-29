@@ -1,5 +1,6 @@
 mod claude;
 mod cli;
+mod config;
 mod display;
 mod error;
 mod filters;
@@ -29,6 +30,7 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = Args::parse();
+    let config = config::load_config()?;
 
     // Get current working directory
     let current_dir = std::env::current_dir().map_err(|e| {
@@ -54,15 +56,21 @@ fn run() -> Result<()> {
         ));
     }
 
+    // Merge CLI arguments with config file settings. CLI takes precedence.
+    let display_config = config.display.unwrap_or_default();
+    let no_tools = args.no_tools > 0 || display_config.no_tools.unwrap_or(false);
+    let last = args.last > 0 || display_config.last.unwrap_or(false);
+    let relative_time = args.relative_time > 0 || display_config.relative_time.unwrap_or(false);
+
     // Load all conversations (reads each file once)
-    let conversations = history::load_conversations(&projects_dir, args.last)?;
+    let conversations = history::load_conversations(&projects_dir, last)?;
 
     if conversations.is_empty() {
         return Err(AppError::NoHistoryFound(projects_dir.display().to_string()));
     }
 
     // Use fzf to select a conversation
-    let selected_path = fzf::select_conversation(&conversations, args.relative_time)?;
+    let selected_path = fzf::select_conversation(&conversations, relative_time)?;
 
     if args.resume {
         resume_with_claude(&selected_path)?;
@@ -70,7 +78,7 @@ fn run() -> Result<()> {
     }
 
     // Display the selected conversation
-    display::display_conversation(&selected_path, args.no_tools)?;
+    display::display_conversation(&selected_path, no_tools)?;
 
     Ok(())
 }
