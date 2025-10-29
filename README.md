@@ -56,8 +56,8 @@ View Claude conversation history with fuzzy search
 Usage: claude-history [OPTIONS]
 
 Options:
-  -t, --no-tools       Hide tool calls from the conversation output
-      --show-tools     Force display of tool calls from the conversation output
+  -t, --show-tools     Show tool calls in the conversation output
+      --no-tools       Hide tool calls from the conversation output
   -d, --show-dir       Print the conversation directory path and exit
   -l, --last           Show the last messages in the fuzzy finder preview
       --first          Show the first messages in the fuzzy finder preview
@@ -74,10 +74,11 @@ Options:
 - `claude-history` shows the first three messages in the preview
 - `claude-history --last` flips the preview to the last three messages.
 
-### hiding tool calls
+### showing tool calls
 
-Tool invocations (`<Calling Tool: …>`) can clutter the output when you're only
-interested in the human conversation. Use `--no-tools` to suppress those lines.
+By default, tool invocations (`<Calling Tool: …>`) are hidden to keep the
+conversation focused on the human dialogue. Use `--show-tools` (or `-t`) to
+display them when you want to see what tools Claude used.
 
 ### showing thinking blocks
 
@@ -105,7 +106,7 @@ to write more contextual commit messages:
 conversation_context=""
 if [ "$include_history" = true ]; then
     echo "Loading conversation history..."
-    conversation_history=$(claude-history --no-tools 2>/dev/null)
+    conversation_history=$(claude-history 2>/dev/null)
     if [ -n "$conversation_history" ]; then
         conversation_context="
 
@@ -126,10 +127,6 @@ $staged_diff"
 claude -p "$prompt"
 ```
 
-The `--no-tools` flag is particularly useful here since it filters out tool
-invocations, giving you clean conversation text that's easier for Claude to
-process as context.
-
 ## configuration
 
 You can set default preferences for display options in `~/.config/claude-history/config.toml`. Command-line flags will override these settings.
@@ -140,25 +137,25 @@ Create the config file:
 mkdir -p ~/.config/claude-history
 cat > ~/.config/claude-history/config.toml << 'EOF'
 [display]
-# Hide tool calls from output by default
-no_tools = true
+# Show tool calls in output (default: false)
+no_tools = false
 
-# Show last messages in preview by default
+# Show last messages in preview (default: false)
 last = false
 
-# Use relative time formatting by default
+# Use relative time formatting (default: false)
 relative_time = true
 
-# Show thinking blocks by default (default: false)
+# Show thinking blocks (default: false)
 show_thinking = false
 EOF
 ```
 
 ### available options
 
-- `no_tools` (boolean): Hide tool calls from conversation output
-- `last` (boolean): Show last messages instead of first in fuzzy finder preview
-- `relative_time` (boolean): Display relative time instead of absolute timestamp
+- `no_tools` (boolean): When false, shows tool calls; when true, hides them (default: false means tools are hidden)
+- `last` (boolean): Show last messages instead of first in fuzzy finder preview (default: false)
+- `relative_time` (boolean): Display relative time instead of absolute timestamp (default: false)
 - `show_thinking` (boolean): Show thinking blocks in conversation output (default: false)
 
 ### overriding config
@@ -170,7 +167,7 @@ Each display option has opposing flags for explicit override:
 - `--relative-time` / `--absolute-time`
 - `--hide-thinking` / `--show-thinking`
 
-For example, if your config has `no_tools = true`, you can temporarily show tools with `--show-tools`.
+For example, if your config has `no_tools = false` (showing tools), you can temporarily hide them with `--no-tools`.
 
 ## filtering details
 

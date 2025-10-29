@@ -4,13 +4,13 @@ use clap::Parser;
 #[command(name = "claude-history")]
 #[command(about = "View Claude conversation history with fuzzy search")]
 pub struct Args {
-    /// Hide tool calls from the conversation output
+    /// Show tool calls in the conversation output
     #[arg(long, short = 't', group = "tools_display")]
-    pub no_tools: bool,
-
-    /// Force display of tool calls from the conversation output
-    #[arg(long, group = "tools_display")]
     pub show_tools: bool,
+
+    /// Hide tool calls from the conversation output
+    #[arg(long, group = "tools_display")]
+    pub no_tools: bool,
 
     /// Show the conversation directory and exit
     #[arg(

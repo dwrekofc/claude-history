@@ -81,7 +81,7 @@ fn run() -> Result<()> {
         args.show_tools,
         args.no_tools,
         display_config.no_tools.map(|b| !b),
-        true,
+        false, // Default: hide tools
     );
     let show_last = resolve_bool_setting(args.last, args.first, display_config.last, false);
     let use_relative_time = resolve_bool_setting(
