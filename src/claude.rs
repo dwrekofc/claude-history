@@ -73,7 +73,8 @@ pub enum ContentBlock {
     ToolResult {
         #[allow(dead_code)]
         tool_use_id: String,
-        content: serde_json::Value, // Can be string or array of content blocks
+        #[serde(default)]
+        content: Option<serde_json::Value>, // Optional in some user tool result entries
     },
     Thinking {
         thinking: String,

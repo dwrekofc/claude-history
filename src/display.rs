@@ -50,15 +50,19 @@ fn display_entry(entry: &LogEntry, no_tools: bool, show_thinking: bool) {
                         ContentBlock::ToolResult { content, .. } => {
                             if !no_tools {
                                 println!("{}", "<Tool Result>".cyan().bold());
-                                // Tool result content can be a string or an array of content blocks
-                                if let Some(result_str) = content.as_str() {
-                                    // If it's a simple string, display it directly
-                                    println!("{}", result_str.dimmed());
-                                } else if let Ok(formatted_result) =
-                                    serde_json::to_string_pretty(content)
-                                {
-                                    // Otherwise, pretty-print the JSON
-                                    println!("{}", formatted_result.dimmed());
+                                if let Some(content_value) = content {
+                                    // Tool result content can be a string or an array of content blocks
+                                    if let Some(result_str) = content_value.as_str() {
+                                        // If it's a simple string, display it directly
+                                        println!("{}", result_str.dimmed());
+                                    } else if let Ok(formatted_result) =
+                                        serde_json::to_string_pretty(content_value)
+                                    {
+                                        // Otherwise, pretty-print the JSON
+                                        println!("{}", formatted_result.dimmed());
+                                    }
+                                } else {
+                                    println!("{}", "<no tool result content>".dimmed());
                                 }
                             }
                         }
