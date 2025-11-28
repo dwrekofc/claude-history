@@ -107,6 +107,11 @@ fn run() -> Result<()> {
     // Use fzf to select a conversation
     let selected_path = fzf::select_conversation(&conversations, use_relative_time)?;
 
+    if args.show_path {
+        println!("{}", selected_path.display());
+        return Ok(());
+    }
+
     if args.resume {
         resume_with_claude(&selected_path)?;
         return Ok(());
