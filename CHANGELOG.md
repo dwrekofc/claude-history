@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.9 (2025-12-14)
+
+- Added color highlighting to the fzf picker
+
 ## v0.1.8 (2025-12-14)
 
 - Improved fzf UX: the timestamp stays visible when searching
