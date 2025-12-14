@@ -20,9 +20,13 @@ pub fn select_conversation(
             "--no-multi",
             "--scheme=default",
             "--delimiter",
-            "\t",
+            "\x1f",
             "--with-nth",
-            "2",
+            "2,3",
+            "--freeze-left",
+            "1",
+            "--ellipsis",
+            " … ",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -47,14 +51,13 @@ pub fn select_conversation(
             } else {
                 String::new()
             };
-            // Include full_text in the display so fzf can search it
-            // (fzf doesn't search hidden fields when using --with-nth)
-            let display_part = format!(
-                "[{}] {}{} | {} {}",
-                conv.index, prefix, timestamp, conv.preview, conv.full_text
-            );
-            // Format: INDEX<tab>DISPLAY_PART
-            writeln!(stdin, "{}\t{}", conv.index, display_part)?;
+            // Format: INDEX<US>TIMESTAMP_PART<US>CONTENT (US = unit separator \x1f)
+            // Field 1 (INDEX) is hidden, field 2 (timestamp) is frozen, field 3 scrolls
+            writeln!(
+                stdin,
+                "{}\x1f[{}] {}{} │\x1f {}",
+                conv.index, conv.index, prefix, timestamp, conv.full_text
+            )?;
         }
         stdin.flush()?;
     }
@@ -72,8 +75,8 @@ pub fn select_conversation(
         return Err(AppError::SelectionCancelled);
     }
 
-    // Extract index from the first tab-separated field
-    if let Some(idx_str) = selection.split('\t').next()
+    // Extract index from the first unit-separator-delimited field
+    if let Some(idx_str) = selection.split('\x1f').next()
         && let Ok(idx) = idx_str.parse::<usize>()
     {
         return conversations
