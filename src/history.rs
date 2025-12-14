@@ -303,7 +303,14 @@ fn decode_path_segment_with_fs(encoded: &str) -> Option<PathBuf> {
                 let test_path_underscore = current_path.join(format!("{}__", current_segment));
                 let test_path_dot = current_path.join(&current_segment).join(".");
 
-                if test_path_underscore.exists() || current_path.join(format!("{}_", current_segment)).read_dir().ok().map(|mut d| d.next().is_some()).unwrap_or(false) {
+                if test_path_underscore.exists()
+                    || current_path
+                        .join(format!("{}_", current_segment))
+                        .read_dir()
+                        .ok()
+                        .map(|mut d| d.next().is_some())
+                        .unwrap_or(false)
+                {
                     current_segment.push_str("__");
                 } else if test_path_dot.exists() {
                     // Treat as /.
@@ -332,11 +339,7 @@ fn decode_path_segment_with_fs(encoded: &str) -> Option<PathBuf> {
                         let prefix = format!("{}-", current_segment);
                         entries
                             .filter_map(|e| e.ok())
-                            .any(|e| {
-                                e.file_name()
-                                    .to_string_lossy()
-                                    .starts_with(&prefix)
-                            })
+                            .any(|e| e.file_name().to_string_lossy().starts_with(&prefix))
                             .then_some(())
                     })
                     .is_some();
