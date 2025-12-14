@@ -24,6 +24,11 @@ readable format.
 Run it from the project directory you work on with Claude Code and it will
 discover the matching transcript folder automatically.
 
+[Install](#install) ·
+[Usage](#usage) ·
+[Configuration](#configuration) ·
+[Changelog](CHANGELOG.md)
+
 ## requirements
 
 - [`fzf`](https://github.com/junegunn/fzf) available on your `PATH`

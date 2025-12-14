@@ -1,0 +1,45 @@
+# Changelog
+
+## v0.1.7 (2025-12-14)
+
+- Added `--global` (`-g`) flag to search conversations across all projects at once
+
+## v0.1.6 (2025-11-29)
+
+- Added `--all-projects` (`-a`) flag to browse conversations from any project
+- Added `--show-path` (`-p`) flag to print the selected conversation's file path
+- Improved fuzzy search to match against full conversation content
+- Added Homebrew installation support
+
+## v0.1.5 (2025-11-17)
+
+- Added display of tool call inputs and results when viewing conversations
+- Fixed project detection for paths containing dots or special characters
+
+## v0.1.4 (2025-10-30)
+
+- Added faster startup with parallel conversation loading
+
+## v0.1.3 (2025-10-30)
+
+- Added `--debug` flag to show diagnostic information about conversation loading
+- Fixed conversations containing only `/clear` commands incorrectly appearing in the list
+- Cleaned up `/clear` command metadata from conversation previews
+- Used file modification time for more accurate conversation dates
+
+## v0.1.2 (2025-10-29)
+
+- Fixed display of tool results that contain structured content instead of plain text
+
+## v0.1.1 (2025-10-29)
+
+- Added configuration file support (`~/.config/claude-history/config.toml`) for persistent display preferences
+- Added `--show-thinking` and `--hide-thinking` flags to control visibility of Claude's thinking blocks
+- Hidden tool calls by default (use `--show-tools` or `-t` to show them)
+- Added `--first` flag to show first messages in preview (inverse of `--last`)
+- Added `--absolute-time` flag to explicitly use timestamps (inverse of `--relative-time`)
+- Fixed message preview order when using `--last` flag
+
+## v0.1.0 (2025-10-29)
+
+- Initial release
