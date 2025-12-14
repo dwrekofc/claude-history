@@ -45,4 +45,4 @@ release-major:
 
 # Internal release helper
 _release bump:
-    @python3 scripts/release.py {{bump}}
+    @cargo-release {{bump}}
