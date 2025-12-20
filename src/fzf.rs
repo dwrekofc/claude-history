@@ -62,8 +62,8 @@ pub fn select_conversation(
             // Field 1 (INDEX) is hidden, field 2 (timestamp) is frozen, field 3 scrolls
             writeln!(
                 stdin,
-                "{}\x1f{DIM}[{}] {}{timestamp}{RESET} │\x1f {}",
-                conv.index, conv.index, prefix, conv.full_text
+                "{}\x1f{DIM}{}{timestamp}{RESET} │\x1f {}",
+                conv.index, prefix, conv.full_text
             )?;
         }
         stdin.flush()?;
