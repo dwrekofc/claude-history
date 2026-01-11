@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.12 (2026-01-11)
+
+- Fixed project path detection failing for usernames containing dots (e.g.,
+  `my.user`) (Thanks @duke8585!)
+
 ## v0.1.11 (2025-12-20)
 
 - Cleaned up fzf picker display by removing index numbers
