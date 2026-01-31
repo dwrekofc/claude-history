@@ -52,8 +52,15 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 conv.timestamp.format("%b %d, %H:%M").to_string()
             };
 
-            // First line: [project] timestamp
+            // Selection indicator
+            let indicator = if is_selected { "▶ " } else { "  " };
+
+            // First line: ▶ [project] timestamp
             let mut header_spans = Vec::new();
+            header_spans.push(Span::styled(
+                indicator,
+                Style::default().fg(Color::Yellow),
+            ));
             if let Some(ref name) = conv.project_name {
                 header_spans.push(Span::styled(
                     format!("[{}] ", name),
@@ -66,21 +73,29 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             ));
             let header = Line::from(header_spans);
 
-            // Second line: preview text (sanitize newlines)
-            let preview_style = if is_selected {
-                Style::default()
-            } else {
-                Style::default().fg(Color::Gray)
-            };
+            // Second line: indented preview text (sanitize newlines)
             let preview_text = conv.preview.replace('\n', " ");
-            let preview = Line::from(Span::styled(preview_text, preview_style));
+            // Truncate preview to fit terminal width with some margin
+            let max_preview_len = area.width.saturating_sub(4) as usize;
+            let truncated_preview = if preview_text.chars().count() > max_preview_len {
+                let truncated: String = preview_text.chars().take(max_preview_len.saturating_sub(1)).collect();
+                format!("{}…", truncated)
+            } else {
+                preview_text
+            };
+
+            let preview_style = Style::default().fg(Color::Gray);
+            let preview = Line::from(vec![
+                Span::raw("  "), // indent to align with text after indicator
+                Span::styled(truncated_preview, preview_style),
+            ]);
 
             // Combine into two-line item
             let content = vec![header, preview];
 
             let mut item = ListItem::new(content);
             if is_selected {
-                item = item.style(Style::default().bg(Color::DarkGray));
+                item = item.style(Style::default().bg(Color::Rgb(40, 40, 40)));
             }
 
             item
@@ -102,20 +117,9 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
         .take(items_per_page.max(1))
         .collect();
 
-    let list = List::new(visible_items).block(Block::default());
+    let list = List::new(visible_items);
 
     frame.render_widget(list, area);
-
-    // Render selection indicator
-    if let Some(selected) = app.selected() {
-        let visible_idx = selected - offset;
-        let y = area.y + (visible_idx * 2) as u16;
-        if y < area.y + area.height {
-            let indicator = Paragraph::new("▶").style(Style::default().fg(Color::Yellow));
-            let indicator_area = Rect::new(area.x, y, 1, 1);
-            frame.render_widget(indicator, indicator_area);
-        }
-    }
 }
 
 fn format_relative_time(timestamp: DateTime<Local>) -> String {
