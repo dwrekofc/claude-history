@@ -79,19 +79,27 @@ impl MarkdownRenderer {
             Tag::Paragraph => {
                 self.flush_pending();
                 // Don't add newline if we just started a list item (bullet is on same line)
-                if !self.in_list_item_start
-                    && !self.output.is_empty()
-                    && !self.output.ends_with('\n')
-                {
-                    self.output.push('\n');
+                if !self.in_list_item_start && !self.output.is_empty() {
+                    // Add blank line before paragraph for visual separation (like original)
+                    if !self.output.ends_with("\n\n") {
+                        if !self.output.ends_with('\n') {
+                            self.output.push('\n');
+                        }
+                        self.output.push('\n');
+                    }
                 }
                 self.in_list_item_start = false;
             }
             Tag::Heading { level, .. } => {
                 self.flush_pending();
-                if !self.output.is_empty() && !self.output.ends_with('\n') {
-                    self.output.push('\n');
-                }
+                // Add blank line before heading for visual separation
+                if !self.output.is_empty()
+                    && !self.output.ends_with("\n\n") {
+                        if !self.output.ends_with('\n') {
+                            self.output.push('\n');
+                        }
+                        self.output.push('\n');
+                    }
                 let hashes = heading_level_to_usize(level);
                 let prefix = "#".repeat(hashes);
                 self.output
