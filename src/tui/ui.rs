@@ -42,12 +42,28 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
 fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     let width = area.width as usize;
     let query = app.query().trim();
+    let query_lower = query.to_lowercase();
 
-    let items: Vec<ListItem> = app
+    // Calculate visible range FIRST (before building any items)
+    let items_per_page = (area.height as usize) / LINES_PER_ITEM;
+    let offset = match (app.selected(), items_per_page) {
+        (Some(sel), n) if n > 0 => (sel / n) * n,
+        _ => 0,
+    };
+    let visible_count = items_per_page.max(1);
+
+    // Cache separator string (same for all items in this frame)
+    let separator_str = "─".repeat(width.saturating_sub(2));
+
+    // Only build ListItems for the visible range
+    let visible_items: Vec<ListItem> = app
         .filtered()
         .iter()
+        .skip(offset)
+        .take(visible_count)
         .enumerate()
-        .map(|(list_idx, &conv_idx)| {
+        .map(|(relative_idx, &conv_idx)| {
+            let list_idx = offset + relative_idx;
             let conv = &app.conversations()[conv_idx];
             let is_selected = app.selected() == Some(list_idx);
 
@@ -103,6 +119,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             header_spans.extend(highlight_text(
                 &project_part,
                 query,
+                &query_lower,
                 project_style,
                 highlight_style,
             ));
@@ -133,17 +150,20 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             preview_spans.extend(highlight_text(
                 &truncated_preview,
                 query,
+                &query_lower,
                 preview_style,
                 highlight_style,
             ));
 
             let preview = Line::from(preview_spans).style(selection_bg);
 
-            // Separator line: dim horizontal rule
-            let separator_char = "─".repeat(width.saturating_sub(2));
+            // Separator line: dim horizontal rule (using cached string)
             let separator = Line::from(vec![
                 Span::raw(" "),
-                Span::styled(separator_char, Style::default().fg(Color::Rgb(50, 50, 50))),
+                Span::styled(
+                    separator_str.clone(),
+                    Style::default().fg(Color::Rgb(50, 50, 50)),
+                ),
             ]);
 
             // Combine into three-line item
@@ -151,23 +171,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    // Calculate visible range to show selected item
-    let items_per_page = (area.height as usize) / LINES_PER_ITEM;
-
-    let offset = match (app.selected(), items_per_page) {
-        (Some(sel), n) if n > 0 => (sel / n) * n,
-        _ => 0,
-    };
-
-    // Create a list with the visible items
-    let visible_items: Vec<ListItem> = items
-        .into_iter()
-        .skip(offset)
-        .take(items_per_page.max(1))
-        .collect();
-
     let list = List::new(visible_items);
-
     frame.render_widget(list, area);
 }
 
@@ -213,6 +217,7 @@ fn sanitize_preview(text: &str) -> String {
 fn highlight_text(
     text: &str,
     query: &str,
+    query_lower: &str,
     base_style: Style,
     highlight_style: Style,
 ) -> Vec<Span<'static>> {
@@ -220,18 +225,17 @@ fn highlight_text(
         return vec![Span::styled(text.to_string(), base_style)];
     }
 
-    let query_lower = query.to_lowercase();
     let text_lower = text.to_lowercase();
     let mut spans = Vec::new();
     let mut last_end = 0;
 
-    for (start, _) in text_lower.match_indices(&query_lower) {
+    for (start, _) in text_lower.match_indices(query_lower) {
         // Add non-matching text before this match
         if start > last_end {
             spans.push(Span::styled(text[last_end..start].to_string(), base_style));
         }
         // Add the matched text with highlight
-        let end = start + query.len();
+        let end = start + query_lower.len();
         spans.push(Span::styled(text[start..end].to_string(), highlight_style));
         last_end = end;
     }
