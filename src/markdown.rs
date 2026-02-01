@@ -5,11 +5,13 @@
 
 use colored::{ColoredString, Colorize};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use unicode_width::UnicodeWidthStr;
 
 /// Render markdown text to ANSI-styled string with line wrapping
 pub fn render_markdown(input: &str, max_width: usize) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TABLES);
 
     let parser = Parser::new_ext(input, options);
     let mut renderer = MarkdownRenderer::new(max_width);
@@ -30,6 +32,23 @@ struct MarkdownRenderer {
     pending_text: String,
     at_line_start: bool,
     in_list_item_start: bool, // Suppress paragraph newline right after list bullet
+    table_state: Option<TableState>,
+}
+
+struct TableState {
+    rows: Vec<Vec<String>>,
+    current_row: Vec<String>,
+    current_cell: String,
+}
+
+impl TableState {
+    fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            current_row: Vec::new(),
+            current_cell: String::new(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -58,6 +77,7 @@ impl MarkdownRenderer {
             pending_text: String::new(),
             at_line_start: true,
             in_list_item_start: false,
+            table_state: None,
         }
     }
 
@@ -178,6 +198,26 @@ impl MarkdownRenderer {
             Tag::Link { dest_url, .. } => {
                 self.style_stack.push(TextStyle::Link(dest_url.to_string()));
             }
+            Tag::Table(_alignments) => {
+                self.flush_pending();
+                if !self.output.is_empty() && !self.output.ends_with("\n\n") {
+                    if !self.output.ends_with('\n') {
+                        self.output.push('\n');
+                    }
+                    self.output.push('\n');
+                }
+                self.table_state = Some(TableState::new());
+            }
+            Tag::TableHead | Tag::TableRow => {
+                if let Some(ref mut state) = self.table_state {
+                    state.current_row = Vec::new();
+                }
+            }
+            Tag::TableCell => {
+                if let Some(ref mut state) = self.table_state {
+                    state.current_cell = String::new();
+                }
+            }
             _ => {}
         }
     }
@@ -224,11 +264,36 @@ impl MarkdownRenderer {
                         .push_str(&format!(" ({})", url).blue().underline().to_string());
                 }
             }
+            TagEnd::Table => {
+                if let Some(state) = self.table_state.take() {
+                    let rendered = render_table(&state.rows);
+                    self.output.push_str(&rendered);
+                }
+                self.at_line_start = true;
+            }
+            TagEnd::TableHead | TagEnd::TableRow => {
+                if let Some(ref mut state) = self.table_state {
+                    let row = std::mem::take(&mut state.current_row);
+                    state.rows.push(row);
+                }
+            }
+            TagEnd::TableCell => {
+                if let Some(ref mut state) = self.table_state {
+                    let cell = std::mem::take(&mut state.current_cell);
+                    state.current_row.push(cell);
+                }
+            }
             _ => {}
         }
     }
 
     fn text(&mut self, text: &str) {
+        // Handle table cell text
+        if let Some(ref mut state) = self.table_state {
+            state.current_cell.push_str(text);
+            return;
+        }
+
         if self.in_code_block {
             // Code blocks: preserve formatting, apply code style per line
             for line in text.lines() {
@@ -250,6 +315,12 @@ impl MarkdownRenderer {
     }
 
     fn inline_code(&mut self, code: &str) {
+        // Handle table cell inline code
+        if let Some(ref mut state) = self.table_state {
+            state.current_cell.push_str(code);
+            return;
+        }
+
         // Inline code with subtle blueish color (no backticks - color distinguishes it)
         let styled = code.truecolor(147, 161, 199).to_string();
         self.pending_text.push_str(&styled);
@@ -360,6 +431,84 @@ fn wrap_text_preserve_ansi(text: &str, max_width: usize) -> Vec<String> {
         .into_iter()
         .map(|cow| cow.into_owned())
         .collect()
+}
+
+/// Render a table with box-drawing characters
+fn render_table(rows: &[Vec<String>]) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    // Calculate column widths based on display width (handles Unicode)
+    let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let mut col_widths = vec![0usize; num_cols];
+
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < num_cols {
+                col_widths[i] = col_widths[i].max(cell.trim().width());
+            }
+        }
+    }
+
+    // Box-drawing characters
+    let h = '─'; // horizontal
+    let v = '│'; // vertical
+    let tl = '┌'; // top-left
+    let tr = '┐'; // top-right
+    let bl = '└'; // bottom-left
+    let br = '┘'; // bottom-right
+    let lj = '├'; // left junction
+    let rj = '┤'; // right junction
+    let tj = '┬'; // top junction
+    let bj = '┴'; // bottom junction
+    let cj = '┼'; // center junction
+
+    let mut output = String::new();
+
+    // Helper to build horizontal line
+    let build_line = |left: char, mid: char, right: char| -> String {
+        let mut line = String::new();
+        line.push(left);
+        for (i, &width) in col_widths.iter().enumerate() {
+            line.extend(std::iter::repeat_n(h, width + 2)); // +2 for padding
+            if i < col_widths.len() - 1 {
+                line.push(mid);
+            }
+        }
+        line.push(right);
+        line.push('\n');
+        line
+    };
+
+    // Top border (dimmed like code fences)
+    output.push_str(&build_line(tl, tj, tr).dimmed().to_string());
+
+    // Rows with separators
+    for (row_idx, row) in rows.iter().enumerate() {
+        // Row content
+        output.push_str(&v.to_string().dimmed().to_string());
+        for (i, width) in col_widths.iter().enumerate() {
+            let cell = row.get(i).map(|s| s.trim()).unwrap_or("");
+            let cell_width = cell.width();
+            let padding = width.saturating_sub(cell_width);
+            output.push(' ');
+            output.push_str(cell);
+            output.push_str(&" ".repeat(padding + 1));
+            output.push_str(&v.to_string().dimmed().to_string());
+        }
+        output.push('\n');
+
+        // Separator (between all rows)
+        if row_idx < rows.len() - 1 {
+            output.push_str(&build_line(lj, cj, rj).dimmed().to_string());
+        }
+    }
+
+    // Bottom border (dimmed like code fences)
+    output.push_str(&build_line(bl, bj, br).dimmed().to_string());
+
+    output
 }
 
 #[cfg(test)]
@@ -480,5 +629,47 @@ Next paragraph here."#;
             "Expected blank line before list, got: {:?}",
             result
         );
+    }
+
+    #[test]
+    fn test_table_basic() {
+        let input = r#"| A | B |
+|---|---|
+| 1 | 2 |"#;
+        let result = render_markdown(input, 80);
+        eprintln!("Table output:\n{}", result);
+        assert!(result.contains("┌"), "Expected top-left corner");
+        assert!(result.contains("│"), "Expected vertical border");
+        assert!(result.contains("└"), "Expected bottom-left corner");
+        assert!(result.contains(" A "), "Expected cell A");
+        assert!(result.contains(" B "), "Expected cell B");
+        assert!(result.contains(" 1 "), "Expected cell 1");
+        assert!(result.contains(" 2 "), "Expected cell 2");
+    }
+
+    #[test]
+    fn test_table_column_widths() {
+        let input = r#"| Column A | Column B |
+|----------|----------|
+| Short    | Longer text |"#;
+        let result = render_markdown(input, 80);
+        eprintln!("Table output:\n{}", result);
+        // Columns should be sized to fit longest content
+        assert!(result.contains("Column A"), "Expected Column A");
+        assert!(result.contains("Longer text"), "Expected Longer text");
+    }
+
+    #[test]
+    fn test_table_multiple_rows() {
+        let input = r#"| H1 | H2 | H3 |
+|----|----|----|
+| A  | B  | C  |
+| D  | E  | F  |
+| G  | H  | I  |"#;
+        let result = render_markdown(input, 80);
+        eprintln!("Table output:\n{}", result);
+        // Should have separators between rows
+        assert!(result.contains("├"), "Expected row separators");
+        assert!(result.contains("┼"), "Expected cross junctions");
     }
 }
