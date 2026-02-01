@@ -8,6 +8,39 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+/// Process user message text to handle command-related XML tags
+/// Returns None if the message should be skipped entirely (e.g., empty local-command-stdout)
+fn process_command_message(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+
+    // Check for empty or whitespace-only local-command-stdout - skip these entirely
+    if trimmed.starts_with("<local-command-stdout>") && trimmed.ends_with("</local-command-stdout>")
+    {
+        let tag_start = "<local-command-stdout>".len();
+        let tag_end = trimmed.len() - "</local-command-stdout>".len();
+        let inner = &trimmed[tag_start..tag_end];
+        if inner.trim().is_empty() {
+            return None;
+        }
+        // Non-empty local-command-stdout: show the content without the tags
+        return Some(inner.trim().to_string());
+    }
+
+    // Check if this is a command message with <command-name> tag
+    if let Some(start) = trimmed.find("<command-name>")
+        && let Some(end) = trimmed.find("</command-name>")
+    {
+        let content_start = start + "<command-name>".len();
+        if content_start < end {
+            // Extract just the command name (e.g., "/clear")
+            return Some(trimmed[content_start..end].to_string());
+        }
+    }
+
+    // Return original text for non-command messages
+    Some(text.to_string())
+}
+
 /// Display a conversation from a file
 pub fn display_conversation(
     file_path: &Path,
@@ -58,13 +91,17 @@ fn display_entry(entry: &LogEntry, no_tools: bool, show_thinking: bool) {
         }
         LogEntry::User { message, .. } => match &message.content {
             UserContent::String(text) => {
-                println!("{} {}", "User:".blue().bold(), text);
+                if let Some(processed) = process_command_message(text) {
+                    println!("{} {}", "User:".blue().bold(), processed);
+                }
             }
             UserContent::Blocks(blocks) => {
                 for block in blocks {
                     match block {
                         ContentBlock::Text { text } => {
-                            println!("{} {}", "User:".blue().bold(), text);
+                            if let Some(processed) = process_command_message(text) {
+                                println!("{} {}", "User:".blue().bold(), processed);
+                            }
                         }
                         ContentBlock::ToolResult { content, .. } => {
                             if !no_tools {
