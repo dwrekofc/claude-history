@@ -222,13 +222,8 @@ fn display_entry<W: Write + ?Sized>(
         LogEntry::User { message, .. } => match &message.content {
             UserContent::String(text) => {
                 if let Some(processed) = process_command_message(text) {
-                    print_ledger_lines(
-                        writer,
-                        "You",
-                        |s| s.white().bold(),
-                        &processed,
-                        content_width,
-                    );
+                    let rendered = render_markdown(&processed, content_width);
+                    print_ledger_markdown(writer, "You", |s| s.white().bold(), &rendered);
                     let _ = writeln!(writer);
                 }
             }
@@ -238,12 +233,12 @@ fn display_entry<W: Write + ?Sized>(
                     match block {
                         ContentBlock::Text { text } => {
                             if let Some(processed) = process_command_message(text) {
-                                print_ledger_lines(
+                                let rendered = render_markdown(&processed, content_width);
+                                print_ledger_markdown(
                                     writer,
                                     "You",
                                     |s| s.white().bold(),
-                                    &processed,
-                                    content_width,
+                                    &rendered,
                                 );
                                 printed_content = true;
                             }
