@@ -62,9 +62,9 @@ preview.
 
 Search uses fuzzy word matching with the following features:
 
-- **Case-insensitive**: "harden" matches "HARDENED"
-- **Underscore as separator**: "harden runtime" matches "HARDENED_RUNTIME"
-- **Prefix matching**: "harden" matches "hardened", "hardening"
+- **Case-insensitive**: "config" matches "CONFIG"
+- **Underscore as separator**: "api key" matches "API_KEY"
+- **Prefix matching**: "auth" matches "authentication", "authorize"
 - **Multi-word AND logic**: all query words must match
 
 Results are ranked by recency, so recent conversations appear first.
