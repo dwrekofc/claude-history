@@ -44,7 +44,14 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     let query_lower = app.query().trim().to_lowercase();
 
     // Calculate visible range FIRST (before building any items)
-    let items_per_page = (area.height as usize) / LINES_PER_ITEM;
+    // When searching, items may have 4 lines (with context), so use 4 lines per item
+    // to ensure the offset calculation matches the actual rendered heights
+    let lines_per_item = if query_lower.is_empty() {
+        LINES_PER_ITEM // 3 lines: header, preview, separator
+    } else {
+        4 // 4 lines: header, preview, context (optional but reserve space), separator
+    };
+    let items_per_page = (area.height as usize) / lines_per_item;
     let offset = match (app.selected(), items_per_page) {
         (Some(sel), n) if n > 0 => (sel / n) * n,
         _ => 0,
@@ -154,6 +161,52 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
 
             let preview = Line::from(preview_spans).style(selection_bg);
 
+            // Check for hidden matches and build context line if needed
+            let context_line = if !query_lower.is_empty() {
+                if let Some(match_pos) =
+                    find_hidden_match(&conv.full_text, &truncated_preview, &query_lower)
+                {
+                    let context_width = width.saturating_sub(4); // Account for indicator
+                    let query_char_len = query_lower.chars().count();
+                    let context_text = extract_match_context(
+                        &conv.full_text,
+                        match_pos,
+                        query_char_len,
+                        context_width,
+                    );
+
+                    // Truncate context if still too long
+                    let truncated_context = if context_text.chars().count() > context_width {
+                        let truncated: String = context_text
+                            .chars()
+                            .take(context_width.saturating_sub(1))
+                            .collect();
+                        format!("{}…", truncated)
+                    } else {
+                        context_text
+                    };
+
+                    // Build context line with highlighting (dimmer style)
+                    let context_base_style = Style::default().fg(Color::Rgb(80, 80, 80));
+                    let context_highlight_style = Style::default().fg(Color::Rgb(60, 160, 140)); // Dimmer cyan
+
+                    let mut context_spans =
+                        vec![Span::styled(indicator.to_string(), indicator_style)];
+                    context_spans.extend(highlight_text(
+                        &truncated_context,
+                        &query_lower,
+                        context_base_style,
+                        context_highlight_style,
+                    ));
+
+                    Some(Line::from(context_spans).style(selection_bg))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // Separator line: dim horizontal rule (using cached string)
             let separator = Line::from(vec![
                 Span::raw(" "),
@@ -163,8 +216,14 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 ),
             ]);
 
-            // Combine into three-line item
-            ListItem::new(vec![header, preview, separator])
+            // Combine into item (3 or 4 lines depending on context)
+            let lines = if let Some(ctx) = context_line {
+                vec![header, preview, ctx, separator]
+            } else {
+                vec![header, preview, separator]
+            };
+
+            ListItem::new(lines)
         })
         .collect();
 
@@ -274,4 +333,75 @@ fn highlight_text(
     } else {
         spans
     }
+}
+
+/// Find the first match in full_text that is NOT visible in the preview.
+/// Returns the byte offset of the match in full_text, or None if all matches are visible.
+fn find_hidden_match(full_text: &str, preview: &str, query_lower: &str) -> Option<usize> {
+    if query_lower.is_empty() {
+        return None;
+    }
+
+    let full_lower = full_text.to_lowercase();
+    let preview_lower = preview.to_lowercase();
+
+    // Count matches in preview vs full text
+    let preview_matches = preview_lower.matches(query_lower).count();
+    let full_matches = full_lower.matches(query_lower).count();
+
+    // If all matches are in the preview, nothing is hidden
+    if full_matches <= preview_matches {
+        return None;
+    }
+
+    // The preview displays the first N occurrences (where N = preview_matches).
+    // The first hidden match is the (N+1)th match in full_text.
+    full_lower
+        .match_indices(query_lower)
+        .nth(preview_matches)
+        .map(|(pos, _)| pos)
+}
+
+/// Extract a context snippet around a match position in full_text.
+/// Returns a sanitized string with ellipsis prefix, suitable for display.
+fn extract_match_context(
+    full_text: &str,
+    match_pos: usize,
+    query_char_len: usize,
+    max_width: usize,
+) -> String {
+    // Calculate how much context to show around the match
+    // Reserve space for ellipsis prefix/suffix (2 chars each)
+    let context_chars = max_width.saturating_sub(query_char_len).saturating_sub(4) / 2;
+
+    // Find char boundaries around match_pos efficiently without collecting all chars
+    // Go back ~context_chars characters from match_pos
+    let start_byte = full_text[..match_pos.min(full_text.len())]
+        .char_indices()
+        .rev()
+        .nth(context_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+
+    // Go forward ~(query_char_len + context_chars) characters from match_pos
+    let end_byte = full_text[match_pos.min(full_text.len())..]
+        .char_indices()
+        .nth(query_char_len + context_chars)
+        .map(|(i, _)| match_pos + i)
+        .unwrap_or(full_text.len());
+
+    let snippet = &full_text[start_byte..end_byte.min(full_text.len())];
+
+    // Sanitize the snippet (remove XML tags, normalize whitespace)
+    let sanitized = sanitize_preview(snippet);
+
+    // Add ellipsis prefix/suffix to indicate this is from elsewhere
+    let prefix = if start_byte > 0 { "…" } else { "" };
+    let suffix = if end_byte < full_text.len() {
+        "…"
+    } else {
+        ""
+    };
+
+    format!("{}{}{}", prefix, sanitized, suffix)
 }
