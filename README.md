@@ -131,6 +131,20 @@ reasoning process.
 If you want to continue a conversation, launch `claude-history` with `--resume`
 and it will hand off to `claude --resume <conversation-id>`.
 
+### Markdown rendering
+
+Claude's responses are rendered with basic markdown formatting:
+
+- **Code blocks** are displayed with distinct styling and preserved formatting
+- **Inline code** appears with background highlighting
+- **Bold**, _italic_, and ~~strikethrough~~ text are styled appropriately
+- **Lists** (ordered and unordered) maintain their structure
+- **Headings** are rendered with # prefixes and emphasized styling
+- **Blockquotes** appear in green with > prefix
+
+This makes Claude's formatted responses much more readable in the terminal. Use
+`--plain` to disable markdown rendering and get raw text output.
+
 ### Plain output mode
 
 Use `--plain` to output conversations without ledger formatting:
@@ -139,8 +153,8 @@ Use `--plain` to output conversations without ledger formatting:
 $ claude-history --plain
 ```
 
-This produces simple `Role: content` output without colors or text wrapping,
-suitable for piping to other tools or LLMs:
+This produces simple `Role: content` output without colors, text wrapping, or
+markdown rendering, suitable for piping to other tools or LLMs:
 
 ```
 You: How do I fix this bug?

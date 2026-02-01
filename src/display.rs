@@ -3,6 +3,7 @@ use crate::cli::DebugLevel;
 use crate::debug;
 use crate::debug_log;
 use crate::error::Result;
+use crate::markdown::render_markdown;
 use crate::pager;
 use colored::{ColoredString, Colorize, CustomColor};
 use crossterm::terminal;
@@ -107,6 +108,36 @@ fn print_ledger_continuation<W: Write + ?Sized>(writer: &mut W, text: &str, cont
         let _ = write!(writer, "{:>width$}", "", width = NAME_WIDTH);
         let _ = write!(writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
         let _ = writeln!(writer, "{}", line.dimmed());
+    }
+}
+
+/// Print pre-formatted markdown text with ledger layout
+/// The text already contains ANSI codes and newlines from the markdown renderer
+fn print_ledger_markdown<W, F>(writer: &mut W, name: &str, style: F, text: &str)
+where
+    W: Write + ?Sized,
+    F: Fn(&str) -> ColoredString,
+{
+    let lines: Vec<&str> = text.lines().collect();
+
+    if lines.is_empty() {
+        // Handle empty text - still print the name
+        let padded = format!("{:>width$}", name, width = NAME_WIDTH);
+        let _ = write!(writer, "{}", style(&padded));
+        let _ = write!(writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+        let _ = writeln!(writer);
+        return;
+    }
+
+    for (i, line) in lines.iter().enumerate() {
+        if i == 0 {
+            let padded = format!("{:>width$}", name, width = NAME_WIDTH);
+            let _ = write!(writer, "{}", style(&padded));
+        } else {
+            let _ = write!(writer, "{:>width$}", "", width = NAME_WIDTH);
+        }
+        let _ = write!(writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+        let _ = writeln!(writer, "{}", line);
     }
 }
 
@@ -304,15 +335,10 @@ fn display_assistant_message<W: Write + ?Sized>(
     let formatted = FormattedMessage::from(message);
     let mut printed_content = false;
 
-    // Print text blocks
+    // Print text blocks with markdown rendering
     for text in formatted.text_blocks {
-        print_ledger_lines(
-            writer,
-            "Claude",
-            |s| s.custom_color(TEAL).bold(),
-            text,
-            content_width,
-        );
+        let rendered = render_markdown(text, content_width);
+        print_ledger_markdown(writer, "Claude", |s| s.custom_color(TEAL).bold(), &rendered);
         printed_content = true;
     }
 
