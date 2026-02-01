@@ -95,6 +95,10 @@ pub struct Args {
     #[arg(long, short = 'p', help = "Print the selected conversation file path")]
     pub show_path: bool,
 
+    /// Output in plain text format without ledger formatting (for piping to other tools)
+    #[arg(long, help = "Output plain text without ledger formatting")]
+    pub plain: bool,
+
     /// Show debug output for conversation loading
     #[arg(
         long,

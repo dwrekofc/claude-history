@@ -74,6 +74,7 @@ fn run() -> Result<()> {
         display_config.show_thinking,
         false,
     );
+    let plain_mode = resolve_bool_setting(args.plain, false, display_config.plain, false);
 
     // Determine how to load conversations based on mode
     let (conversations, selected_path) = if args.global {
@@ -167,7 +168,16 @@ fn run() -> Result<()> {
     }
 
     // Display the selected conversation (pass the negative form for no_tools)
-    display::display_conversation(&selected_path, !show_tools, show_thinking, args.debug)?;
+    if plain_mode {
+        display::display_conversation_plain(
+            &selected_path,
+            !show_tools,
+            show_thinking,
+            args.debug,
+        )?;
+    } else {
+        display::display_conversation(&selected_path, !show_tools, show_thinking, args.debug)?;
+    }
 
     Ok(())
 }

@@ -19,6 +19,7 @@ pub struct DisplayConfig {
     pub last: Option<bool>,
     pub relative_time: Option<bool>,
     pub show_thinking: Option<bool>,
+    pub plain: Option<bool>,
 }
 
 /// Returns the path to the configuration file: ~/.config/claude-history/config.toml

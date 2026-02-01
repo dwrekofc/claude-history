@@ -307,3 +307,141 @@ fn display_assistant_message(
         println!();
     }
 }
+
+/// Display a conversation in plain text format (no ledger formatting)
+pub fn display_conversation_plain(
+    file_path: &Path,
+    no_tools: bool,
+    show_thinking: bool,
+    debug_level: Option<DebugLevel>,
+) -> Result<()> {
+    let file = File::open(file_path)?;
+    let reader = BufReader::new(file);
+
+    for (line_number, line_result) in reader.lines().enumerate() {
+        let line = line_result?;
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        match serde_json::from_str::<LogEntry>(&line) {
+            Ok(entry) => {
+                display_entry_plain(&entry, no_tools, show_thinking);
+            }
+            Err(e) => {
+                debug::error(
+                    debug_level,
+                    &format!("Failed to parse line {}: {}", line_number + 1, e),
+                );
+                if debug_level.is_some() {
+                    let _ = debug_log::log_display_error(
+                        file_path,
+                        line_number + 1,
+                        &e.to_string(),
+                        &line,
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn display_entry_plain(entry: &LogEntry, no_tools: bool, show_thinking: bool) {
+    match entry {
+        LogEntry::Summary { .. }
+        | LogEntry::FileHistorySnapshot { .. }
+        | LogEntry::System { .. }
+        | LogEntry::Progress { .. } => {
+            // Skip metadata entries
+        }
+        LogEntry::User { message, .. } => match &message.content {
+            UserContent::String(text) => {
+                if let Some(processed) = process_command_message(text) {
+                    println!("You: {}", processed);
+                    println!();
+                }
+            }
+            UserContent::Blocks(blocks) => {
+                let mut printed_content = false;
+                for block in blocks {
+                    match block {
+                        ContentBlock::Text { text } => {
+                            if let Some(processed) = process_command_message(text) {
+                                println!("You: {}", processed);
+                                printed_content = true;
+                            }
+                        }
+                        ContentBlock::ToolResult { content, .. } => {
+                            if !no_tools {
+                                println!("Tool: <Result>");
+                                if let Some(content_value) = content {
+                                    let content_str =
+                                        if let Some(result_str) = content_value.as_str() {
+                                            result_str.to_string()
+                                        } else if let Ok(formatted_result) =
+                                            serde_json::to_string_pretty(content_value)
+                                        {
+                                            formatted_result
+                                        } else {
+                                            "<invalid content>".to_string()
+                                        };
+                                    println!("{}", content_str);
+                                } else {
+                                    println!("<no content>");
+                                }
+                                printed_content = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if printed_content {
+                    println!();
+                }
+            }
+        },
+        LogEntry::Assistant { message, .. } => {
+            display_assistant_message_plain(message, no_tools, show_thinking);
+        }
+    }
+}
+
+fn display_assistant_message_plain(
+    message: &AssistantMessage,
+    no_tools: bool,
+    show_thinking: bool,
+) {
+    let formatted = FormattedMessage::from(message);
+    let mut printed_content = false;
+
+    // Print text blocks
+    for text in formatted.text_blocks {
+        println!("Claude: {}", text);
+        printed_content = true;
+    }
+
+    // Print tool calls
+    if !no_tools {
+        for (tool_name, tool_input) in formatted.tool_calls {
+            println!("Claude: <Calling: {}>", tool_name);
+            if let Ok(formatted_input) = serde_json::to_string_pretty(tool_input) {
+                println!("{}", formatted_input);
+            }
+            printed_content = true;
+        }
+    }
+
+    // Print thinking blocks
+    if show_thinking {
+        for thought in formatted.thinking_steps {
+            println!("Thinking: {}", thought);
+            printed_content = true;
+        }
+    }
+
+    if printed_content {
+        println!();
+    }
+}
