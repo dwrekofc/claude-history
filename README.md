@@ -28,11 +28,13 @@ discover the matching transcript folder automatically.
 [Install](#install) · [Usage](#usage) · [Configuration](#configuration) ·
 [Changelog](CHANGELOG.md)
 
-## requirements
+## Install
 
-- Claude Code conversation logs under `~/.claude/projects`
+### Quick install
 
-## install
+```sh
+curl -fsSL https://raw.githubusercontent.com/raine/claude-history/main/scripts/install.sh | bash
+```
 
 ### Homebrew (macOS/Linux)
 
@@ -46,7 +48,7 @@ brew install raine/claude-history/claude-history
 cargo install claude-history
 ```
 
-## usage
+## Usage
 
 Run the tool from inside the project directory you're interested in:
 
@@ -59,7 +61,7 @@ search across all transcripts. Each item shows a preview of the conversation and
 match context is highlighted when your search matches content not visible in the
 preview.
 
-### keyboard navigation
+### Keyboard navigation
 
 | Key                     | Action                    |
 | ----------------------- | ------------------------- |
@@ -70,7 +72,7 @@ preview.
 | `Enter`                 | Select conversation       |
 | `Esc` / `Ctrl+C`        | Quit                      |
 
-### search
+### Search
 
 Search is case-insensitive substring matching. Results are ranked by a
 combination of match frequency and recency, so recent conversations with more
@@ -101,30 +103,30 @@ Options:
   -h, --help             Print help
 ```
 
-### preview modes
+### Preview modes
 
 - `claude-history` shows the first messages in the preview
 - `claude-history --last` flips the preview to the last messages
 
-### showing tool calls
+### Showing tool calls
 
 By default, tool invocations (`<Calling Tool: …>`) are hidden to keep the
 conversation focused on the human dialogue. Use `--show-tools` (or `-t`) to
 display them when you want to see what tools Claude used.
 
-### showing thinking blocks
+### Showing thinking blocks
 
 Extended thinking models (like Claude Sonnet 4.5) include reasoning steps in
 their output. By default, these thinking blocks are hidden to keep conversations
 focused. Use `--show-thinking` to display them when you want to see Claude's
 reasoning process.
 
-### resuming conversations
+### Resuming conversations
 
 If you want to continue a conversation, launch `claude-history` with `--resume`
 and it will hand off to `claude --resume <conversation-id>`.
 
-### plain output mode
+### Plain output mode
 
 Use `--plain` to output conversations without ledger formatting:
 
@@ -141,7 +143,7 @@ You: How do I fix this bug?
 Claude: Looking at the code, the issue is...
 ```
 
-### pager output
+### Pager output
 
 By default, conversation output is piped through a pager (`less -R`) when stdout
 is a terminal. This enables scrolling through long conversations. Use
@@ -150,7 +152,7 @@ is a terminal. This enables scrolling through long conversations. Use
 The pager respects the `$PAGER` environment variable. If not set, it defaults to
 `less -R` (which preserves ANSI colors).
 
-### global search
+### Global search
 
 Use `--global` (or `-g`) to search all conversations from all projects at once:
 
@@ -170,7 +172,7 @@ folder name.
 The `--resume` flag works with global search. It will automatically run Claude
 in the correct project directory for the selected conversation.
 
-### integration with other scripts
+### Integration with other scripts
 
 You can integrate `claude-history` into other tools to pass conversation context
 to new Claude Code sessions. This is useful when you want Claude to understand
@@ -205,7 +207,7 @@ $staged_diff"
 claude -p "$prompt"
 ```
 
-## configuration
+## Configuration
 
 You can set default preferences for display options in
 `~/.config/claude-history/config.toml`. Command-line flags will override these
@@ -237,7 +239,7 @@ pager = true
 EOF
 ```
 
-### available options
+### Available options
 
 - `no_tools` (boolean): When false, shows tool calls; when true, hides them
   (default: false means tools are hidden)
@@ -252,7 +254,7 @@ EOF
 - `pager` (boolean): Pipe output through a pager for scrolling (default: true
   when stdout is a terminal)
 
-### overriding config
+### Overriding config
 
 Each display option has opposing flags for explicit override:
 
@@ -266,7 +268,7 @@ Each display option has opposing flags for explicit override:
 For example, if your config has `no_tools = false` (showing tools), you can
 temporarily hide them with `--no-tools`.
 
-## filtering details
+## Filtering details
 
 The tool filters out some noisy artifacts before showing conversations, so you
 only see transcripts that are likely to matter for your recent work.
@@ -275,7 +277,7 @@ only see transcripts that are likely to matter for your recent work.
   without user interaction
 - Skips conversations that only contain the `/clear` terminal command
 
-## development
+## Development
 
 The repository includes `just` recipes:
 
