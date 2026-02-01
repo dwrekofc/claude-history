@@ -85,7 +85,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     let visible_count = items_per_page.max(1);
 
     // Cache separator string (same for all items in this frame)
-    let separator_str = "─".repeat(width.saturating_sub(2));
+    let separator_str = "─".repeat(width);
 
     // Only build ListItems for the visible range
     let visible_items: Vec<ListItem> = app
@@ -106,8 +106,8 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 conv.timestamp.format("%b %d, %H:%M").to_string()
             };
 
-            // Selection indicator: vertical bar for all rows
-            let indicator = "▌ ";
+            // Selection indicator: vertical bar for all rows (with left padding)
+            let indicator = " ▌ ";
             let indicator_style = if is_selected {
                 Style::default().fg(Color::Rgb(78, 201, 176))
             } else {
@@ -233,14 +233,11 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 None
             };
 
-            // Separator line: dim horizontal rule (using cached string)
-            let separator = Line::from(vec![
-                Span::raw(" "),
-                Span::styled(
-                    separator_str.clone(),
-                    Style::default().fg(Color::Rgb(50, 50, 50)),
-                ),
-            ]);
+            // Separator line: dim horizontal rule (full width)
+            let separator = Line::from(Span::styled(
+                separator_str.clone(),
+                Style::default().fg(Color::Rgb(50, 50, 50)),
+            ));
 
             // Combine into item (3 or 4 lines depending on context)
             let lines = if let Some(ctx) = context_line {
