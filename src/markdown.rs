@@ -93,13 +93,12 @@ impl MarkdownRenderer {
             Tag::Heading { level, .. } => {
                 self.flush_pending();
                 // Add blank line before heading for visual separation
-                if !self.output.is_empty()
-                    && !self.output.ends_with("\n\n") {
-                        if !self.output.ends_with('\n') {
-                            self.output.push('\n');
-                        }
+                if !self.output.is_empty() && !self.output.ends_with("\n\n") {
+                    if !self.output.ends_with('\n') {
                         self.output.push('\n');
                     }
+                    self.output.push('\n');
+                }
                 let hashes = heading_level_to_usize(level);
                 let prefix = "#".repeat(hashes);
                 self.output
@@ -108,7 +107,11 @@ impl MarkdownRenderer {
             Tag::CodeBlock(kind) => {
                 self.flush_pending();
                 self.in_code_block = true;
-                if !self.output.is_empty() && !self.output.ends_with('\n') {
+                // Add blank line before code block for visual separation
+                if !self.output.is_empty() && !self.output.ends_with("\n\n") {
+                    if !self.output.ends_with('\n') {
+                        self.output.push('\n');
+                    }
                     self.output.push('\n');
                 }
                 let lang = match kind {
@@ -233,8 +236,9 @@ impl MarkdownRenderer {
                 }
             }
         } else {
-            // Regular text: accumulate for wrapping
-            self.pending_text.push_str(text);
+            // Apply styles immediately (before they get popped from stack)
+            let styled = apply_styles(text, &self.style_stack);
+            self.pending_text.push_str(&styled);
         }
     }
 
@@ -288,8 +292,8 @@ impl MarkdownRenderer {
                     self.output.push_str(&format!("{}  ", indent));
                 }
             }
-            let styled = apply_styles(line, &self.style_stack);
-            self.output.push_str(&styled);
+            // Styles are already applied in text(), just output the line
+            self.output.push_str(line);
         }
 
         self.at_line_start = false;
@@ -369,8 +373,17 @@ mod tests {
 
     #[test]
     fn test_bold() {
+        // Force colors for test
+        colored::control::set_override(true);
         let result = render_markdown("This is **bold** text", 80);
         assert!(result.contains("bold"));
+        // Check for ANSI bold code (ESC[1m)
+        assert!(
+            result.contains("\x1b[1m"),
+            "Expected bold ANSI codes in: {:?}",
+            result
+        );
+        colored::control::unset_override();
     }
 
     #[test]
