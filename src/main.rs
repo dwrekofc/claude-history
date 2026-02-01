@@ -152,7 +152,7 @@ fn run() -> Result<()> {
     }
 
     // Display the selected conversation (pass the negative form for no_tools)
-    display::display_conversation(&selected_path, !show_tools, show_thinking)?;
+    display::display_conversation(&selected_path, !show_tools, show_thinking, args.debug)?;
 
     Ok(())
 }

@@ -1,4 +1,5 @@
 use crate::claude::{AssistantMessage, ContentBlock, LogEntry, UserContent};
+use crate::debug_log;
 use crate::error::Result;
 use colored::*;
 use std::fs::File;
@@ -6,11 +7,16 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// Display a conversation from a file
-pub fn display_conversation(file_path: &Path, no_tools: bool, show_thinking: bool) -> Result<()> {
+pub fn display_conversation(
+    file_path: &Path,
+    no_tools: bool,
+    show_thinking: bool,
+    debug: bool,
+) -> Result<()> {
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
 
-    for line_result in reader.lines() {
+    for (line_number, line_result) in reader.lines().enumerate() {
         let line = line_result?;
         if line.trim().is_empty() {
             continue;
@@ -23,6 +29,14 @@ pub fn display_conversation(file_path: &Path, no_tools: bool, show_thinking: boo
             Err(e) => {
                 eprintln!("Failed to parse line: {}", e);
                 eprintln!("Line content: {}", line);
+                if debug {
+                    let _ = debug_log::log_display_error(
+                        file_path,
+                        line_number + 1,
+                        &e.to_string(),
+                        &line,
+                    );
+                }
             }
         }
     }
