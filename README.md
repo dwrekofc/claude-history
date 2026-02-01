@@ -287,6 +287,8 @@ This runs `cargo fmt`, `cargo clippy --fix`, and `cargo build` in parallel.
 
 - [workmux](https://github.com/raine/workmux) — Git worktrees + tmux windows for
   parallel AI agent workflows
+- [git-surgeon](https://github.com/raine/git-surgeon) — Non-interactive
+  hunk-level git staging for AI agents
 - [consult-llm-mcp](https://github.com/raine/consult-llm-mcp) — MCP server that
   lets Claude Code consult stronger AI models (o3, Gemini, GPT-5.1 Codex)
 - [tmux-file-picker](https://github.com/raine/tmux-file-picker) — Pop up fzf in
