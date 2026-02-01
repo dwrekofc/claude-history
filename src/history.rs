@@ -1,4 +1,6 @@
 use crate::claude::{LogEntry, extract_text_from_assistant, extract_text_from_user};
+use crate::cli::DebugLevel;
+use crate::debug;
 use crate::error::{AppError, Result};
 use chrono::{DateTime, Local};
 use rayon::prelude::*;
@@ -61,23 +63,24 @@ pub fn get_claude_projects_dir(current_dir: &Path) -> Result<PathBuf> {
 }
 
 /// Load conversations from ALL projects globally
-pub fn load_all_conversations(show_last: bool, debug: bool) -> Result<Vec<Conversation>> {
+pub fn load_all_conversations(
+    show_last: bool,
+    debug_level: Option<DebugLevel>,
+) -> Result<Vec<Conversation>> {
     let root = get_claude_projects_root()?;
     let projects = list_projects(&root)?;
 
-    if debug {
-        eprintln!(
-            "[DEBUG] Loading global history from {} projects",
-            projects.len()
-        );
-    }
+    debug::info(
+        debug_level,
+        &format!("Loading global history from {} projects", projects.len()),
+    );
 
     // Load conversations from all projects in parallel
     let mut all_conversations: Vec<Conversation> = projects
         .par_iter()
         .flat_map(|project| {
             let project_dir = root.join(&project.name);
-            match load_conversations(&project_dir, show_last, debug) {
+            match load_conversations(&project_dir, show_last, debug_level) {
                 Ok(mut convs) => {
                     // Fallback path for old JSONL files without cwd field
                     let fallback_path = decode_project_dir_name_to_path(&project.name);
@@ -93,12 +96,10 @@ pub fn load_all_conversations(show_last: bool, debug: bool) -> Result<Vec<Conver
                     convs
                 }
                 Err(e) => {
-                    if debug {
-                        eprintln!(
-                            "[DEBUG] Failed to load project {}: {}",
-                            project.display_name, e
-                        );
-                    }
+                    debug::warn(
+                        debug_level,
+                        &format!("Failed to load project {}: {}", project.display_name, e),
+                    );
                     Vec::new()
                 }
             }
@@ -113,12 +114,13 @@ pub fn load_all_conversations(show_last: bool, debug: bool) -> Result<Vec<Conver
         conv.index = idx;
     }
 
-    if debug {
-        eprintln!(
-            "[DEBUG] Total global conversations loaded: {}",
+    debug::info(
+        debug_level,
+        &format!(
+            "Total global conversations loaded: {}",
             all_conversations.len()
-        );
-    }
+        ),
+    );
 
     Ok(all_conversations)
 }
@@ -520,7 +522,7 @@ mod tests {
 pub fn load_conversations(
     projects_dir: &Path,
     show_last: bool,
-    debug: bool,
+    debug_level: Option<DebugLevel>,
 ) -> Result<Vec<Conversation>> {
     // Find all JSONL files and capture metadata in one pass
     let mut files_with_meta = Vec::new();
@@ -535,9 +537,7 @@ pub fn load_conversations(
                 && filename.starts_with("agent-")
             {
                 skipped_agent_files += 1;
-                if debug {
-                    eprintln!("[DEBUG] Skipping agent file: {}", filename);
-                }
+                debug::debug(debug_level, &format!("Skipping agent file: {}", filename));
                 continue;
             }
 
@@ -550,13 +550,14 @@ pub fn load_conversations(
         }
     }
 
-    if debug {
-        eprintln!(
-            "[DEBUG] Found {} conversation files ({} agent files skipped)",
+    debug::info(
+        debug_level,
+        &format!(
+            "Found {} conversation files ({} agent files skipped)",
             files_with_meta.len(),
             skipped_agent_files
-        );
-    }
+        ),
+    );
 
     // Sort by modification time (newest first)
     files_with_meta.sort_by_key(|(_, modified)| modified.unwrap_or(SystemTime::UNIX_EPOCH));
@@ -572,18 +573,20 @@ pub fn load_conversations(
                 .unwrap_or("unknown")
                 .to_owned();
 
-            match process_conversation_file(path, show_last, modified, debug) {
+            match process_conversation_file(path, show_last, modified, debug_level) {
                 Ok(Some(conversation)) => {
-                    if debug {
-                        eprintln!("[DEBUG] Loaded {}: {}", filename, conversation.preview);
-                    }
+                    debug::debug(
+                        debug_level,
+                        &format!("Loaded {}: {}", filename, conversation.preview),
+                    );
                     Some(conversation)
                 }
                 Ok(None) => None,
                 Err(e) => {
-                    if debug {
-                        eprintln!("[DEBUG] Error processing {}: {}", filename, e);
-                    }
+                    debug::warn(
+                        debug_level,
+                        &format!("Error processing {}: {}", filename, e),
+                    );
                     None
                 }
             }
@@ -608,12 +611,10 @@ pub fn load_conversations(
         conv.project_path = Some(project_path);
     }
 
-    if debug {
-        eprintln!(
-            "[DEBUG] Total conversations loaded: {}",
-            conversations.len()
-        );
-    }
+    debug::info(
+        debug_level,
+        &format!("Total conversations loaded: {}", conversations.len()),
+    );
 
     Ok(conversations)
 }
@@ -623,7 +624,7 @@ fn process_conversation_file(
     path: PathBuf,
     show_last: bool,
     modified: Option<SystemTime>,
-    debug: bool,
+    debug_level: Option<DebugLevel>,
 ) -> Result<Option<Conversation>> {
     let filename = path
         .file_name()
@@ -717,35 +718,38 @@ fn process_conversation_file(
                     context_after,
                 });
 
-                if debug {
-                    eprintln!(
-                        "[DEBUG] Parse error in {} at line {}: {}",
+                debug::warn(
+                    debug_level,
+                    &format!(
+                        "Parse error in {} at line {}: {}",
                         filename,
                         line_idx + 1,
                         e
-                    );
-                }
+                    ),
+                );
             }
         }
     }
 
     // Check if this is a clear-only conversation or if preview is empty after filtering
     if is_clear_only_conversation(&user_messages) {
-        if debug {
-            eprintln!("[DEBUG] Filtered {}: clear-only conversation", filename);
-        }
+        debug::debug(
+            debug_level,
+            &format!("Filtered {}: clear-only conversation", filename),
+        );
         return Ok(None);
     }
 
     if all_parts.is_empty() || preview_parts.is_empty() {
-        if debug {
-            eprintln!(
-                "[DEBUG] Filtered {}: empty conversation (all_parts={}, preview_parts={})",
+        debug::debug(
+            debug_level,
+            &format!(
+                "Filtered {}: empty conversation (all_parts={}, preview_parts={})",
                 filename,
                 all_parts.len(),
                 preview_parts.len()
-            );
-        }
+            ),
+        );
         return Ok(None);
     }
 

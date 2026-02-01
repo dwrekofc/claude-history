@@ -1,4 +1,6 @@
 use crate::claude::{AssistantMessage, ContentBlock, LogEntry, UserContent};
+use crate::cli::DebugLevel;
+use crate::debug;
 use crate::debug_log;
 use crate::error::Result;
 use colored::*;
@@ -11,7 +13,7 @@ pub fn display_conversation(
     file_path: &Path,
     no_tools: bool,
     show_thinking: bool,
-    debug: bool,
+    debug_level: Option<DebugLevel>,
 ) -> Result<()> {
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
@@ -27,9 +29,11 @@ pub fn display_conversation(
                 display_entry(&entry, no_tools, show_thinking);
             }
             Err(e) => {
-                eprintln!("Failed to parse line: {}", e);
-                eprintln!("Line content: {}", line);
-                if debug {
+                debug::error(
+                    debug_level,
+                    &format!("Failed to parse line {}: {}", line_number + 1, e),
+                );
+                if debug_level.is_some() {
                     let _ = debug_log::log_display_error(
                         file_path,
                         line_number + 1,

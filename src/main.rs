@@ -1,6 +1,7 @@
 mod claude;
 mod cli;
 mod config;
+mod debug;
 mod debug_log;
 mod display;
 mod error;
@@ -122,14 +123,18 @@ fn run() -> Result<()> {
     if args.resume {
         // Find the selected conversation to get its project_path
         let conv = conversations.iter().find(|c| c.path == selected_path);
-        if args.debug {
-            eprintln!("[DEBUG] Selected path: {}", selected_path.display());
-            eprintln!("[DEBUG] Found conversation: {}", conv.is_some());
-            if let Some(c) = conv {
-                eprintln!("[DEBUG] project_path: {:?}", c.project_path);
-                if let Some(p) = &c.project_path {
-                    eprintln!("[DEBUG] project_path exists: {}", p.exists());
-                }
+        debug::debug(
+            args.debug,
+            &format!("Selected path: {}", selected_path.display()),
+        );
+        debug::debug(
+            args.debug,
+            &format!("Found conversation: {}", conv.is_some()),
+        );
+        if let Some(c) = conv {
+            debug::debug(args.debug, &format!("project_path: {:?}", c.project_path));
+            if let Some(p) = &c.project_path {
+                debug::debug(args.debug, &format!("project_path exists: {}", p.exists()));
             }
         }
         let project_path = conv.and_then(|c| c.project_path.as_ref());
@@ -138,15 +143,21 @@ fn run() -> Result<()> {
     }
 
     // Log parse errors to debug log if debug mode is enabled
-    if args.debug
+    if args.debug.is_some()
         && let Some(conv) = conversations.iter().find(|c| c.path == selected_path)
     {
         if let Err(e) = debug_log::log_parse_errors(conv) {
-            eprintln!("[DEBUG] Failed to write parse errors to log: {}", e);
+            debug::warn(
+                args.debug,
+                &format!("Failed to write parse errors to log: {}", e),
+            );
         } else if !conv.parse_errors.is_empty() {
-            eprintln!(
-                "[DEBUG] Logged {} parse error(s) to ~/.local/state/claude-history/debug.log",
-                conv.parse_errors.len()
+            debug::info(
+                args.debug,
+                &format!(
+                    "Logged {} parse error(s) to ~/.local/state/claude-history/debug.log",
+                    conv.parse_errors.len()
+                ),
             );
         }
     }

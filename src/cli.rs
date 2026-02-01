@@ -1,4 +1,43 @@
 use clap::Parser;
+use std::fmt;
+use std::str::FromStr;
+
+/// Log level for debug output filtering
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DebugLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl FromStr for DebugLevel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "debug" => Ok(DebugLevel::Debug),
+            "info" => Ok(DebugLevel::Info),
+            "warn" | "warning" => Ok(DebugLevel::Warn),
+            "error" => Ok(DebugLevel::Error),
+            _ => Err(format!(
+                "invalid log level '{}', expected: debug, info, warn, error",
+                s
+            )),
+        }
+    }
+}
+
+impl fmt::Display for DebugLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DebugLevel::Debug => write!(f, "debug"),
+            DebugLevel::Info => write!(f, "info"),
+            DebugLevel::Warn => write!(f, "warn"),
+            DebugLevel::Error => write!(f, "error"),
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "claude-history")]
@@ -59,9 +98,12 @@ pub struct Args {
     /// Show debug output for conversation loading
     #[arg(
         long,
-        help = "Print debug information about which conversations were found and filtered"
+        value_name = "LEVEL",
+        default_missing_value = "debug",
+        num_args = 0..=1,
+        help = "Print debug information (optionally filter by level: debug, info, warn, error)"
     )]
-    pub debug: bool,
+    pub debug: Option<DebugLevel>,
 
     /// Search conversations from all projects globally
     #[arg(
