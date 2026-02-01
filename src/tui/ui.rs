@@ -341,9 +341,8 @@ fn highlight_text(
         return vec![Span::styled(text.to_string(), base_style)];
     }
 
-    // Collect chars for iteration
+    // Collect chars for iteration (original text only)
     let chars: Vec<char> = text.chars().collect();
-    let lower_chars: Vec<char> = text.to_lowercase().chars().collect();
 
     // Build char-to-byte mapping
     let char_to_byte: Vec<usize> = text
@@ -372,8 +371,12 @@ fn highlight_text(
                 word_end += 1;
             }
 
-            // Build lowercase word
-            let word_lower: String = lower_chars[word_start..word_end].iter().collect();
+            // Extract original word and lowercase it for comparison
+            // This avoids Unicode index mismatch issues from to_lowercase changing char count
+            let start_byte = char_to_byte[word_start];
+            let end_byte = char_to_byte[word_end];
+            let original_word = &text[start_byte..end_byte];
+            let word_lower = original_word.to_lowercase();
 
             // Check if any query word is a prefix of this word
             let matched_query = query_words.iter().find(|qw| word_lower.starts_with(*qw));
@@ -381,30 +384,27 @@ fn highlight_text(
             if let Some(qw) = matched_query {
                 // Add non-highlighted text before this word
                 if word_start > last_end {
-                    let start_byte = char_to_byte[last_end];
-                    let end_byte = char_to_byte[word_start];
+                    let prev_start_byte = char_to_byte[last_end];
                     spans.push(Span::styled(
-                        text[start_byte..end_byte].to_string(),
+                        text[prev_start_byte..start_byte].to_string(),
                         base_style,
                     ));
                 }
 
                 // Highlight the matched prefix portion
+                // Use char count from original word to handle Unicode correctly
                 let prefix_len = qw.chars().count();
                 let highlight_end = (word_start + prefix_len).min(word_end);
-                let highlight_start_byte = char_to_byte[word_start];
                 let highlight_end_byte = char_to_byte[highlight_end];
                 spans.push(Span::styled(
-                    text[highlight_start_byte..highlight_end_byte].to_string(),
+                    text[start_byte..highlight_end_byte].to_string(),
                     highlight_style,
                 ));
 
                 // Add the rest of the word (unhighlighted)
                 if highlight_end < word_end {
-                    let suffix_start_byte = char_to_byte[highlight_end];
-                    let suffix_end_byte = char_to_byte[word_end];
                     spans.push(Span::styled(
-                        text[suffix_start_byte..suffix_end_byte].to_string(),
+                        text[highlight_end_byte..end_byte].to_string(),
                         base_style,
                     ));
                 }
@@ -445,9 +445,15 @@ fn find_hidden_match(full_text: &str, preview: &str, query_lower: &str) -> Optio
     }
 
     // Count word prefix matches in text using single-pass iteration
+    // Uses original text chars and lowercases words individually to avoid Unicode index issues
     let count_word_matches = |text: &str| -> usize {
-        let text_lower = text.to_lowercase();
-        let chars: Vec<char> = text_lower.chars().collect();
+        let chars: Vec<char> = text.chars().collect();
+        let char_to_byte: Vec<usize> = text
+            .char_indices()
+            .map(|(byte_idx, _)| byte_idx)
+            .chain(std::iter::once(text.len()))
+            .collect();
+
         let mut count = 0;
         let mut prev_sep = true;
 
@@ -460,9 +466,14 @@ fn find_hidden_match(full_text: &str, preview: &str, query_lower: &str) -> Optio
                     .position(|&c| is_word_separator(c))
                     .map(|p| i + p)
                     .unwrap_or(chars.len());
-                let word: String = chars[i..word_end].iter().collect();
 
-                if query_words.iter().any(|qw| word.starts_with(qw)) {
+                // Extract and lowercase word
+                let start_byte = char_to_byte[i];
+                let end_byte = char_to_byte[word_end];
+                let word = &text[start_byte..end_byte];
+                let word_lower = word.to_lowercase();
+
+                if query_words.iter().any(|qw| word_lower.starts_with(qw)) {
                     count += 1;
                 }
             }
@@ -479,10 +490,10 @@ fn find_hidden_match(full_text: &str, preview: &str, query_lower: &str) -> Optio
     }
 
     // Find the (preview_matches + 1)th match in full_text using single-pass
-    let full_lower = full_text.to_lowercase();
-    let chars: Vec<char> = full_lower.chars().collect();
+    // Use original text chars to avoid Unicode index mismatch
+    let chars: Vec<char> = full_text.chars().collect();
 
-    // Build char-to-byte mapping
+    // Build char-to-byte mapping from original text
     let char_to_byte: Vec<usize> = full_text
         .char_indices()
         .map(|(byte_idx, _)| byte_idx)
@@ -501,13 +512,18 @@ fn find_hidden_match(full_text: &str, preview: &str, query_lower: &str) -> Optio
                 .position(|&c| is_word_separator(c))
                 .map(|p| i + p)
                 .unwrap_or(chars.len());
-            let word: String = chars[i..word_end].iter().collect();
 
-            if let Some(qw) = query_words.iter().find(|qw| word.starts_with(*qw)) {
+            // Extract and lowercase word
+            let start_byte = char_to_byte[i];
+            let end_byte = char_to_byte[word_end];
+            let word = &full_text[start_byte..end_byte];
+            let word_lower = word.to_lowercase();
+
+            if let Some(qw) = query_words.iter().find(|qw| word_lower.starts_with(*qw)) {
                 match_count += 1;
                 if match_count > preview_matches {
                     // Return byte offset and the matched prefix length
-                    return Some((char_to_byte[i], qw.chars().count()));
+                    return Some((start_byte, qw.chars().count()));
                 }
             }
         }
