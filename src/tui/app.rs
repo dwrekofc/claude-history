@@ -15,7 +15,17 @@ use std::time::Duration;
 /// Result of running the TUI
 pub enum Action {
     Select(PathBuf),
+    Delete(PathBuf),
     Quit,
+}
+
+/// App mode - normal browsing or confirming an action
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mode {
+    /// Normal list browsing
+    Normal,
+    /// Confirming deletion of the selected conversation
+    ConfirmDelete,
 }
 
 /// Loading state for the TUI
@@ -43,6 +53,8 @@ pub struct App {
     use_relative_time: bool,
     /// Loading state
     loading_state: LoadingState,
+    /// Current app mode (normal or confirming deletion)
+    mode: Mode,
 }
 
 impl App {
@@ -60,6 +72,7 @@ impl App {
             query: String::new(),
             use_relative_time,
             loading_state: LoadingState::Ready,
+            mode: Mode::Normal,
         }
     }
 
@@ -73,6 +86,7 @@ impl App {
             query: String::new(),
             use_relative_time,
             loading_state: LoadingState::Loading { loaded: 0 },
+            mode: Mode::Normal,
         }
     }
 
@@ -228,8 +242,63 @@ impl App {
         self.use_relative_time
     }
 
+    pub fn mode(&self) -> &Mode {
+        &self.mode
+    }
+
+    /// Delete the currently selected conversation from the list.
+    /// Returns the path of the deleted conversation for the caller to handle file deletion.
+    /// Handles index management for conversations, searchable, and filtered vectors.
+    pub fn delete_selected(&mut self) -> Option<PathBuf> {
+        let selected = self.selected?;
+        let conv_idx = *self.filtered.get(selected)?;
+        let path = self.conversations[conv_idx].path.clone();
+
+        // Remove from conversations and searchable (parallel vectors)
+        self.conversations.remove(conv_idx);
+        self.searchable.remove(conv_idx);
+
+        // Update filtered: remove the deleted index and decrement all indices > conv_idx
+        self.filtered.retain(|&idx| idx != conv_idx);
+        for idx in &mut self.filtered {
+            if *idx > conv_idx {
+                *idx -= 1;
+            }
+        }
+
+        // Update selection: stay at same position if possible, or move to last item
+        if self.filtered.is_empty() {
+            self.selected = None;
+        } else if selected >= self.filtered.len() {
+            self.selected = Some(self.filtered.len() - 1);
+        }
+        // else: selected stays the same (now pointing to next item)
+
+        Some(path)
+    }
+
+    /// Handle a key event during confirmation mode
+    fn handle_confirm_key(&mut self, code: KeyCode) -> Option<Action> {
+        match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                self.mode = Mode::Normal;
+                self.get_selected_path().map(Action::Delete)
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                None
+            }
+            _ => None,
+        }
+    }
+
     /// Handle a key event, returns Some(Action) if the app should exit
     fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
+        // Handle confirmation mode first
+        if self.mode == Mode::ConfirmDelete {
+            return self.handle_confirm_key(code);
+        }
+
         // During loading, allow navigation and typing but not Enter selection
         if self.is_loading() {
             return match code {
@@ -321,6 +390,12 @@ impl App {
                 self.update_filter();
                 None
             }
+            KeyCode::Delete => {
+                if self.get_selected_path().is_some() {
+                    self.mode = Mode::ConfirmDelete;
+                }
+                None
+            }
             _ => None,
         }
     }
@@ -381,13 +456,28 @@ pub fn run(conversations: Vec<Conversation>, use_relative_time: bool) -> Result<
         if let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))? {
             // Only handle key press events (not release)
             if key.kind == KeyEventKind::Press
-                && let Some(action) = app.handle_key(key.code, key.modifiers)
-            {
-                if let Action::Select(ref path) = action {
-                    let _ = debug_log::log_selected_path(path);
+                && let Some(action) = app.handle_key(key.code, key.modifiers) {
+                    match action {
+                        Action::Delete(ref path) => {
+                            // Delete the file from disk
+                            if let Err(e) = std::fs::remove_file(path) {
+                                let _ = debug_log::log_debug(&format!(
+                                    "Failed to delete {}: {}",
+                                    path.display(),
+                                    e
+                                ));
+                            }
+                            // Remove from app state
+                            app.delete_selected();
+                            // Continue the loop (don't exit TUI)
+                        }
+                        Action::Select(ref path) => {
+                            let _ = debug_log::log_selected_path(path);
+                            return Ok(action);
+                        }
+                        Action::Quit => return Ok(action),
+                    }
                 }
-                return Ok(action);
-            }
         }
     }
 }
@@ -454,9 +544,23 @@ pub fn run_with_loader(
         if event::poll(Duration::from_millis(50)).map_err(|e| AppError::Io(io::Error::other(e)))?
             && let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))?
             && key.kind == KeyEventKind::Press
-            && let Some(action) = app.handle_key(key.code, key.modifiers)
-        {
-            return Ok((action, app.into_conversations()));
-        }
+            && let Some(action) = app.handle_key(key.code, key.modifiers) {
+                match action {
+                    Action::Delete(ref path) => {
+                        // Delete the file from disk
+                        if let Err(e) = std::fs::remove_file(path) {
+                            let _ = debug_log::log_debug(&format!(
+                                "Failed to delete {}: {}",
+                                path.display(),
+                                e
+                            ));
+                        }
+                        // Remove from app state
+                        app.delete_selected();
+                        // Continue the loop (don't exit TUI)
+                    }
+                    _ => return Ok((action, app.into_conversations())),
+                }
+            }
     }
 }

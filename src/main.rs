@@ -93,6 +93,7 @@ fn run() -> Result<()> {
         match tui::run_with_loader(rx, use_relative_time)? {
             (tui::Action::Select(path), convs) => (convs, path),
             (tui::Action::Quit, _) => return Err(AppError::SelectionCancelled),
+            (tui::Action::Delete(_), _) => unreachable!("Delete is handled internally"),
         }
     } else {
         // Current Directory mode - synchronous loading is fast enough
@@ -126,6 +127,7 @@ fn run() -> Result<()> {
         match tui::run(conversations.clone(), use_relative_time)? {
             tui::Action::Select(path) => (conversations, path),
             tui::Action::Quit => return Err(AppError::SelectionCancelled),
+            tui::Action::Delete(_) => unreachable!("Delete is handled internally"),
         }
     };
 

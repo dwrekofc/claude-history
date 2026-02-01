@@ -100,6 +100,29 @@ fn truncate_line(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// Log a debug message to the debug log file.
+pub fn log_debug(message: &str) -> std::io::Result<()> {
+    let log_path = match get_debug_log_path() {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+
+    // Create directory if needed
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    writeln!(file, "[{}] {}", timestamp, message)?;
+
+    Ok(())
+}
+
 /// Log the selected conversation path to the debug log file.
 pub fn log_selected_path(path: &std::path::Path) -> std::io::Result<()> {
     let log_path = match get_debug_log_path() {

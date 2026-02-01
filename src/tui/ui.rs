@@ -1,4 +1,4 @@
-use crate::tui::app::{App, LoadingState};
+use crate::tui::app::{App, LoadingState, Mode};
 use crate::tui::search::{is_word_separator, normalize_for_search};
 use chrono::{DateTime, Local};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
@@ -20,14 +20,32 @@ pub fn render(frame: &mut Frame, app: &App) {
     let inner_area = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
-    // Layout: search bar at top, list below (inside the border)
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(1)])
-        .split(inner_area);
+    // Check if we need space for confirmation dialog
+    let (list_area, confirm_area) = if *app.mode() == Mode::ConfirmDelete {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .split(inner_area);
+        render_search_bar(frame, app, chunks[0]);
+        (chunks[1], Some(chunks[2]))
+    } else {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(inner_area);
+        render_search_bar(frame, app, chunks[0]);
+        (chunks[1], None)
+    };
 
-    render_search_bar(frame, app, chunks[0]);
-    render_list(frame, app, chunks[1]);
+    render_list(frame, app, list_area);
+
+    if let Some(area) = confirm_area {
+        render_confirm_dialog(frame, area);
+    }
 }
 
 fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -80,6 +98,19 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
         let cursor_x = (area.x + 3).saturating_add(query_width).min(max_x);
         frame.set_cursor_position(Position::new(cursor_x, area.y));
     }
+}
+
+fn render_confirm_dialog(frame: &mut Frame, area: Rect) {
+    let prompt = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            "Delete this conversation? ",
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::styled("(y/n)", Style::default().fg(Color::Rgb(140, 140, 140))),
+    ]);
+    let paragraph = Paragraph::new(prompt);
+    frame.render_widget(paragraph, area);
 }
 
 fn render_list(frame: &mut Frame, app: &App, area: Rect) {
