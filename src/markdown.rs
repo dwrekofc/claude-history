@@ -29,6 +29,7 @@ struct MarkdownRenderer {
     in_code_block: bool,
     pending_text: String,
     at_line_start: bool,
+    in_list_item_start: bool, // Suppress paragraph newline right after list bullet
 }
 
 #[derive(Clone)]
@@ -56,6 +57,7 @@ impl MarkdownRenderer {
             in_code_block: false,
             pending_text: String::new(),
             at_line_start: true,
+            in_list_item_start: false,
         }
     }
 
@@ -76,9 +78,14 @@ impl MarkdownRenderer {
         match tag {
             Tag::Paragraph => {
                 self.flush_pending();
-                if !self.output.is_empty() && !self.output.ends_with('\n') {
+                // Don't add newline if we just started a list item (bullet is on same line)
+                if !self.in_list_item_start
+                    && !self.output.is_empty()
+                    && !self.output.ends_with('\n')
+                {
                     self.output.push('\n');
                 }
+                self.in_list_item_start = false;
             }
             Tag::Heading { level, .. } => {
                 self.flush_pending();
@@ -137,6 +144,7 @@ impl MarkdownRenderer {
                     }
                 }
                 self.at_line_start = false;
+                self.in_list_item_start = true; // Next paragraph shouldn't add newline
             }
             Tag::Emphasis => self.style_stack.push(TextStyle::Italic),
             Tag::Strong => self.style_stack.push(TextStyle::Bold),
@@ -179,9 +187,11 @@ impl MarkdownRenderer {
             }
             TagEnd::List(_) => {
                 self.list_stack.pop();
+                self.in_list_item_start = false; // Clear flag when list ends
             }
             TagEnd::Item => {
                 self.flush_pending();
+                self.in_list_item_start = false; // Clear flag when item ends
             }
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => {
                 self.style_stack.pop();
@@ -374,5 +384,59 @@ mod tests {
         let result = render_markdown("# Heading", 80);
         assert!(result.contains("#"));
         assert!(result.contains("Heading"));
+    }
+
+    #[test]
+    fn test_linebreaks_preserved() {
+        let input = "Line one here\nLine two here\nLine three";
+        let result = render_markdown(input, 80);
+        // Should have newlines between lines
+        let lines: Vec<&str> = result.lines().collect();
+        eprintln!("DEBUG lines: {:?}", lines);
+        assert!(
+            lines.len() >= 3,
+            "Expected at least 3 lines, got {}: {:?}",
+            lines.len(),
+            lines
+        );
+    }
+
+    #[test]
+    fn test_paragraph_then_list() {
+        let input = "Some text here:\n- Item one\n- Item two";
+        let result = render_markdown(input, 80);
+        eprintln!("DEBUG output:\n{}", result);
+        eprintln!("DEBUG escaped: {:?}", result);
+        // Should have newline between text and list
+        assert!(result.contains("here:\n"), "Expected newline after colon");
+    }
+
+    #[test]
+    fn test_list_then_paragraph() {
+        let input = "- Item with text\n- Another item\n\nParagraph after list.";
+        let result = render_markdown(input, 80);
+        eprintln!("DEBUG output:\n{}", result);
+        eprintln!("DEBUG escaped: {:?}", result);
+        // Should have newline between list and paragraph
+        assert!(
+            result.contains("item\n"),
+            "Expected newline after list item"
+        );
+        assert!(
+            result.contains("\nParagraph"),
+            "Expected paragraph on new line"
+        );
+    }
+
+    #[test]
+    fn test_complex_structure() {
+        let input = r#"Arguments: `--no-review` task description
+- Detects OS
+- Downloads binary
+
+Next paragraph here."#;
+        let result = render_markdown(input, 80);
+        eprintln!("DEBUG output:\n{}", result);
+        eprintln!("DEBUG escaped: {:?}", result);
     }
 }
