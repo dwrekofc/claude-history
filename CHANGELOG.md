@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.17 (2026-02-01)
+
+- Added `Ctrl+R` keybinding to resume the selected conversation directly from
+  the TUI
+
 ## v0.1.16 (2026-02-01)
 
 - Fixed a crash when using global search (`-g`) that could occur when deleting
