@@ -1,4 +1,5 @@
 use crate::tui::app::{App, LoadingState};
+use crate::tui::search::{is_word_separator, normalize_for_search};
 use chrono::{DateTime, Local};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use ratatui::prelude::*;
@@ -220,15 +221,14 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
 
             // Check for hidden matches and build context line if needed
             let context_line = if !query_lower.is_empty() {
-                if let Some(match_pos) =
+                if let Some((match_pos, match_char_len)) =
                     find_hidden_match(&conv.full_text, &truncated_preview, &query_lower)
                 {
                     let context_width = width.saturating_sub(4); // Account for indicator
-                    let query_char_len = query_lower.chars().count();
                     let context_text = extract_match_context(
                         &conv.full_text,
                         match_pos,
-                        query_char_len,
+                        match_char_len,
                         context_width,
                     );
 
@@ -334,51 +334,92 @@ fn highlight_text(
         return vec![Span::styled(text.to_string(), base_style)];
     }
 
-    let text_lower = text.to_lowercase();
-    let query_char_len = query_lower.chars().count();
+    // Normalize query (replace underscores with spaces)
+    let query_normalized = normalize_for_search(query_lower);
+    let query_words: Vec<&str> = query_normalized.split_whitespace().collect();
+    if query_words.is_empty() {
+        return vec![Span::styled(text.to_string(), base_style)];
+    }
 
-    // Build a mapping from char index to byte index for the original text
+    // Collect chars for iteration
+    let chars: Vec<char> = text.chars().collect();
+    let lower_chars: Vec<char> = text.to_lowercase().chars().collect();
+
+    // Build char-to-byte mapping
     let char_to_byte: Vec<usize> = text
         .char_indices()
         .map(|(byte_idx, _)| byte_idx)
         .chain(std::iter::once(text.len()))
         .collect();
 
-    // Find matches by character position in lowercased text
     let mut spans = Vec::new();
-    let mut last_char_end = 0;
-
-    let lower_chars: Vec<char> = text_lower.chars().collect();
-    let query_chars: Vec<char> = query_lower.chars().collect();
-
+    let mut last_end = 0;
     let mut char_idx = 0;
-    while char_idx + query_chars.len() <= lower_chars.len() {
-        if lower_chars[char_idx..char_idx + query_chars.len()] == query_chars[..] {
-            // Found a match at char_idx
-            if char_idx > last_char_end {
-                let start_byte = char_to_byte[last_char_end];
-                let end_byte = char_to_byte[char_idx];
-                spans.push(Span::styled(
-                    text[start_byte..end_byte].to_string(),
-                    base_style,
-                ));
+
+    while char_idx < chars.len() {
+        // Check if we're at a word start
+        let at_word_start = if char_idx == 0 {
+            !is_word_separator(chars[char_idx])
+        } else {
+            is_word_separator(chars[char_idx - 1]) && !is_word_separator(chars[char_idx])
+        };
+
+        if at_word_start {
+            // Find word end
+            let word_start = char_idx;
+            let mut word_end = char_idx;
+            while word_end < chars.len() && !is_word_separator(chars[word_end]) {
+                word_end += 1;
             }
-            let match_start_byte = char_to_byte[char_idx];
-            let match_end_byte = char_to_byte[char_idx + query_char_len];
-            spans.push(Span::styled(
-                text[match_start_byte..match_end_byte].to_string(),
-                highlight_style,
-            ));
-            last_char_end = char_idx + query_char_len;
-            char_idx = last_char_end;
+
+            // Build lowercase word
+            let word_lower: String = lower_chars[word_start..word_end].iter().collect();
+
+            // Check if any query word is a prefix of this word
+            let matched_query = query_words.iter().find(|qw| word_lower.starts_with(*qw));
+
+            if let Some(qw) = matched_query {
+                // Add non-highlighted text before this word
+                if word_start > last_end {
+                    let start_byte = char_to_byte[last_end];
+                    let end_byte = char_to_byte[word_start];
+                    spans.push(Span::styled(
+                        text[start_byte..end_byte].to_string(),
+                        base_style,
+                    ));
+                }
+
+                // Highlight the matched prefix portion
+                let prefix_len = qw.chars().count();
+                let highlight_end = (word_start + prefix_len).min(word_end);
+                let highlight_start_byte = char_to_byte[word_start];
+                let highlight_end_byte = char_to_byte[highlight_end];
+                spans.push(Span::styled(
+                    text[highlight_start_byte..highlight_end_byte].to_string(),
+                    highlight_style,
+                ));
+
+                // Add the rest of the word (unhighlighted)
+                if highlight_end < word_end {
+                    let suffix_start_byte = char_to_byte[highlight_end];
+                    let suffix_end_byte = char_to_byte[word_end];
+                    spans.push(Span::styled(
+                        text[suffix_start_byte..suffix_end_byte].to_string(),
+                        base_style,
+                    ));
+                }
+
+                last_end = word_end;
+            }
+            char_idx = word_end;
         } else {
             char_idx += 1;
         }
     }
 
     // Add remaining text
-    if last_char_end < char_to_byte.len() - 1 {
-        let start_byte = char_to_byte[last_char_end];
+    if last_end < chars.len() {
+        let start_byte = char_to_byte[last_end];
         spans.push(Span::styled(text[start_byte..].to_string(), base_style));
     }
 
@@ -390,30 +431,90 @@ fn highlight_text(
 }
 
 /// Find the first match in full_text that is NOT visible in the preview.
-/// Returns the byte offset of the match in full_text, or None if all matches are visible.
-fn find_hidden_match(full_text: &str, preview: &str, query_lower: &str) -> Option<usize> {
+/// Returns (byte_offset, matched_word_char_len) or None if all matches are visible.
+fn find_hidden_match(full_text: &str, preview: &str, query_lower: &str) -> Option<(usize, usize)> {
     if query_lower.is_empty() {
         return None;
     }
 
-    let full_lower = full_text.to_lowercase();
-    let preview_lower = preview.to_lowercase();
+    // Normalize query
+    let query_normalized = normalize_for_search(query_lower);
+    let query_words: Vec<&str> = query_normalized.split_whitespace().collect();
+    if query_words.is_empty() {
+        return None;
+    }
 
-    // Count matches in preview vs full text
-    let preview_matches = preview_lower.matches(query_lower).count();
-    let full_matches = full_lower.matches(query_lower).count();
+    // Count word prefix matches in text using single-pass iteration
+    let count_word_matches = |text: &str| -> usize {
+        let text_lower = text.to_lowercase();
+        let chars: Vec<char> = text_lower.chars().collect();
+        let mut count = 0;
+        let mut prev_sep = true;
 
-    // If all matches are in the preview, nothing is hidden
+        for (i, &c) in chars.iter().enumerate() {
+            let is_sep = is_word_separator(c);
+            if !is_sep && prev_sep {
+                // Word start - find word end
+                let word_end = chars[i..]
+                    .iter()
+                    .position(|&c| is_word_separator(c))
+                    .map(|p| i + p)
+                    .unwrap_or(chars.len());
+                let word: String = chars[i..word_end].iter().collect();
+
+                if query_words.iter().any(|qw| word.starts_with(qw)) {
+                    count += 1;
+                }
+            }
+            prev_sep = is_sep;
+        }
+        count
+    };
+
+    let preview_matches = count_word_matches(preview);
+    let full_matches = count_word_matches(full_text);
+
     if full_matches <= preview_matches {
         return None;
     }
 
-    // The preview displays the first N occurrences (where N = preview_matches).
-    // The first hidden match is the (N+1)th match in full_text.
-    full_lower
-        .match_indices(query_lower)
-        .nth(preview_matches)
-        .map(|(pos, _)| pos)
+    // Find the (preview_matches + 1)th match in full_text using single-pass
+    let full_lower = full_text.to_lowercase();
+    let chars: Vec<char> = full_lower.chars().collect();
+
+    // Build char-to-byte mapping
+    let char_to_byte: Vec<usize> = full_text
+        .char_indices()
+        .map(|(byte_idx, _)| byte_idx)
+        .chain(std::iter::once(full_text.len()))
+        .collect();
+
+    let mut match_count = 0;
+    let mut prev_sep = true;
+
+    for (i, &c) in chars.iter().enumerate() {
+        let is_sep = is_word_separator(c);
+        if !is_sep && prev_sep {
+            // Word start
+            let word_end = chars[i..]
+                .iter()
+                .position(|&c| is_word_separator(c))
+                .map(|p| i + p)
+                .unwrap_or(chars.len());
+            let word: String = chars[i..word_end].iter().collect();
+
+            if let Some(qw) = query_words.iter().find(|qw| word.starts_with(*qw)) {
+                match_count += 1;
+                if match_count > preview_matches {
+                    // Return byte offset and the matched prefix length
+                    return Some((char_to_byte[i], qw.chars().count()));
+                }
+            }
+        }
+        prev_sep = is_sep;
+    }
+
+    None
 }
 
 /// Extract a context snippet around a match position in full_text.
