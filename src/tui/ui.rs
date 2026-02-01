@@ -31,19 +31,37 @@ pub fn render(frame: &mut Frame, app: &App) {
 
 fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
     let result_count = format!("{}/{}", app.filtered().len(), app.conversations().len());
-    let title = format!(" {} ", result_count);
 
-    let input = Paragraph::new(format!("> {}", app.query()))
-        .block(Block::default().borders(Borders::ALL).title(title));
+    // Build search line: " ❯ query" on left, "count " on right
+    let prompt = " ❯ ";
+    let query = app.query();
+    let left_len = prompt.chars().count() + query.chars().count();
+    let count_len = result_count.chars().count() + 1; // +1 for trailing space
+    let padding = (area.width as usize).saturating_sub(left_len + count_len + 1);
+
+    let search_line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("❯ ", Style::default().fg(Color::Rgb(78, 201, 176))),
+        Span::raw(query.to_string()),
+        Span::raw(" ".repeat(padding)),
+        Span::styled(result_count, Style::default().fg(Color::Rgb(100, 100, 100))),
+        Span::raw(" "),
+    ]);
+
+    let input = Paragraph::new(search_line).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::Rgb(60, 60, 60))),
+    );
 
     frame.render_widget(input, area);
 
-    // Position cursor after the query text (clamped to area bounds)
-    if area.width > 3 && area.height > 1 {
+    // Position cursor after the query text (account for " ❯ " prefix)
+    if area.width > 3 {
         let query_width = app.query().chars().count() as u16;
         let max_x = area.x + area.width.saturating_sub(2);
         let cursor_x = (area.x + 3).saturating_add(query_width).min(max_x);
-        frame.set_cursor_position(Position::new(cursor_x, area.y + 1));
+        frame.set_cursor_position(Position::new(cursor_x, area.y));
     }
 }
 
