@@ -42,7 +42,12 @@ pub fn search(
     let mut scored: Vec<(usize, f64, DateTime<Local>)> = searchable
         .par_iter()
         .filter_map(|s| {
-            let score = score_text(&s.text_lower, &query_lower, conversations[s.index].timestamp, now);
+            let score = score_text(
+                &s.text_lower,
+                &query_lower,
+                conversations[s.index].timestamp,
+                now,
+            );
             if score > 0.0 {
                 Some((s.index, score, conversations[s.index].timestamp))
             } else {

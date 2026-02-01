@@ -57,8 +57,13 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 conv.timestamp.format("%b %d, %H:%M").to_string()
             };
 
-            // Selection indicator
-            let indicator = if is_selected { "▶ " } else { "  " };
+            // Selection indicator: vertical bar for all rows
+            let indicator = "▌ ";
+            let indicator_style = if is_selected {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Rgb(60, 60, 60))
+            };
 
             // Build left part: indicator + project
             let project_part = conv
@@ -72,7 +77,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             let right_len = timestamp.chars().count();
             let padding = width.saturating_sub(left_len + right_len + 1);
 
-            // Header line: ▶ project-name                    timestamp
+            // Header line: ▌ project-name                    timestamp
             let project_style = if is_selected {
                 Style::default().fg(Color::White).bold()
             } else {
@@ -86,7 +91,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             };
 
             let header = Line::from(vec![
-                Span::styled(indicator, Style::default().fg(Color::Yellow).bold()),
+                Span::styled(indicator, indicator_style),
                 Span::styled(project_part, project_style),
                 Span::raw(" ".repeat(padding)),
                 Span::styled(timestamp, Style::default().fg(Color::DarkGray)),
@@ -97,8 +102,10 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             let preview_text = sanitize_preview(&conv.preview);
             let max_preview_len = width.saturating_sub(4);
             let truncated_preview = if preview_text.chars().count() > max_preview_len {
-                let truncated: String =
-                    preview_text.chars().take(max_preview_len.saturating_sub(1)).collect();
+                let truncated: String = preview_text
+                    .chars()
+                    .take(max_preview_len.saturating_sub(1))
+                    .collect();
                 format!("{}…", truncated)
             } else {
                 preview_text
@@ -106,7 +113,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
 
             let preview_style = Style::default().fg(Color::Rgb(110, 110, 110));
             let preview = Line::from(vec![
-                Span::raw("  "),
+                Span::styled(indicator, indicator_style),
                 Span::styled(truncated_preview, preview_style),
             ])
             .style(selection_bg);

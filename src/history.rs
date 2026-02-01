@@ -624,9 +624,10 @@ fn process_conversation_file(
                 LogEntry::User { message, cwd, .. } => {
                     // Extract cwd from the first user message that has it
                     if extracted_cwd.is_none()
-                        && let Some(cwd_str) = cwd {
-                            extracted_cwd = Some(PathBuf::from(cwd_str));
-                        }
+                        && let Some(cwd_str) = cwd
+                    {
+                        extracted_cwd = Some(PathBuf::from(cwd_str));
+                    }
 
                     let text = extract_text_from_user(&message);
                     if text.is_empty() {

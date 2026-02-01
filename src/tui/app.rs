@@ -60,19 +60,19 @@ impl App {
 
     /// Move selection up
     fn select_prev(&mut self) {
-        if let Some(selected) = self.selected {
-            if selected > 0 {
-                self.selected = Some(selected - 1);
-            }
+        if let Some(selected) = self.selected
+            && selected > 0
+        {
+            self.selected = Some(selected - 1);
         }
     }
 
     /// Move selection down
     fn select_next(&mut self) {
-        if let Some(selected) = self.selected {
-            if selected + 1 < self.filtered.len() {
-                self.selected = Some(selected + 1);
-            }
+        if let Some(selected) = self.selected
+            && selected + 1 < self.filtered.len()
+        {
+            self.selected = Some(selected + 1);
         }
     }
 
@@ -185,13 +185,12 @@ struct TerminalGuard {
 
 impl TerminalGuard {
     fn new() -> Result<Self> {
-        terminal::enable_raw_mode()
-            .map_err(|e| AppError::Io(io::Error::new(io::ErrorKind::Other, e)))?;
+        terminal::enable_raw_mode().map_err(|e| AppError::Io(io::Error::other(e)))?;
 
         let mut stdout = io::stdout();
         if let Err(e) = crossterm::execute!(stdout, EnterAlternateScreen) {
             let _ = terminal::disable_raw_mode();
-            return Err(AppError::Io(io::Error::new(io::ErrorKind::Other, e)));
+            return Err(AppError::Io(io::Error::other(e)));
         }
 
         let backend = CrosstermBackend::new(stdout);
@@ -200,7 +199,7 @@ impl TerminalGuard {
             Err(e) => {
                 let _ = terminal::disable_raw_mode();
                 let _ = crossterm::execute!(io::stdout(), LeaveAlternateScreen);
-                return Err(AppError::Io(io::Error::new(io::ErrorKind::Other, e)));
+                return Err(AppError::Io(io::Error::other(e)));
             }
         };
 
@@ -231,14 +230,12 @@ pub fn run(conversations: Vec<Conversation>, use_relative_time: bool) -> Result<
     loop {
         guard.terminal.draw(|frame| ui::render(frame, &app))?;
 
-        if let Event::Key(key) = event::read()
-            .map_err(|e| AppError::Io(io::Error::new(io::ErrorKind::Other, e)))?
-        {
+        if let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))? {
             // Only handle key press events (not release)
-            if key.kind == KeyEventKind::Press {
-                if let Some(action) = app.handle_key(key.code, key.modifiers) {
-                    return Ok(action);
-                }
+            if key.kind == KeyEventKind::Press
+                && let Some(action) = app.handle_key(key.code, key.modifiers)
+            {
+                return Ok(action);
             }
         }
     }

@@ -2,4 +2,4 @@ mod app;
 mod search;
 mod ui;
 
-pub use app::{run, Action};
+pub use app::{Action, run};
