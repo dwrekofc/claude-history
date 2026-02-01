@@ -77,9 +77,8 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 Span::styled(timestamp, Style::default().fg(Color::DarkGray)),
             ]);
 
-            // Second line: indented preview text (sanitize newlines)
-            let preview_text = conv.preview.replace('\n', " ");
-            // Truncate preview to fit terminal width with some margin
+            // Preview line: sanitized and truncated
+            let preview_text = sanitize_preview(&conv.preview);
             let max_preview_len = width.saturating_sub(4);
             let truncated_preview = if preview_text.chars().count() > max_preview_len {
                 let truncated: String = preview_text.chars().take(max_preview_len.saturating_sub(1)).collect();
@@ -129,4 +128,37 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
 fn format_relative_time(timestamp: DateTime<Local>) -> String {
     let delta = timestamp.signed_duration_since(Local::now());
     HumanTime::from(delta).to_text_en(Accuracy::Rough, Tense::Present)
+}
+
+/// Sanitize preview text by removing XML-like tags and normalizing whitespace
+fn sanitize_preview(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut in_tag = false;
+    let mut last_was_space = false;
+
+    for ch in text.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if in_tag => {}
+            '\n' | '\r' | '\t' => {
+                if !last_was_space {
+                    result.push(' ');
+                    last_was_space = true;
+                }
+            }
+            ' ' => {
+                if !last_was_space {
+                    result.push(' ');
+                    last_was_space = true;
+                }
+            }
+            _ => {
+                result.push(ch);
+                last_was_space = false;
+            }
+        }
+    }
+
+    result.trim().to_string()
 }
