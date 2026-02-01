@@ -246,17 +246,24 @@ impl App {
         &self.mode
     }
 
-    /// Delete the currently selected conversation from the list.
-    /// Returns the path of the deleted conversation for the caller to handle file deletion.
+    /// Remove the currently selected conversation from the UI list.
+    /// This should only be called after the file has been successfully deleted from disk.
     /// Handles index management for conversations, searchable, and filtered vectors.
-    pub fn delete_selected(&mut self) -> Option<PathBuf> {
-        let selected = self.selected?;
-        let conv_idx = *self.filtered.get(selected)?;
-        let path = self.conversations[conv_idx].path.clone();
+    pub fn remove_selected_from_list(&mut self) {
+        let Some(selected) = self.selected else {
+            return;
+        };
+        let Some(&conv_idx) = self.filtered.get(selected) else {
+            return;
+        };
 
-        // Remove from conversations and searchable (parallel vectors)
+        // Remove from conversations
         self.conversations.remove(conv_idx);
-        self.searchable.remove(conv_idx);
+
+        // Remove from searchable if it's populated (empty during loading)
+        if conv_idx < self.searchable.len() {
+            self.searchable.remove(conv_idx);
+        }
 
         // Update filtered: remove the deleted index and decrement all indices > conv_idx
         self.filtered.retain(|&idx| idx != conv_idx);
@@ -273,8 +280,6 @@ impl App {
             self.selected = Some(self.filtered.len() - 1);
         }
         // else: selected stays the same (now pointing to next item)
-
-        Some(path)
     }
 
     /// Handle a key event during confirmation mode
@@ -456,28 +461,34 @@ pub fn run(conversations: Vec<Conversation>, use_relative_time: bool) -> Result<
         if let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))? {
             // Only handle key press events (not release)
             if key.kind == KeyEventKind::Press
-                && let Some(action) = app.handle_key(key.code, key.modifiers) {
-                    match action {
-                        Action::Delete(ref path) => {
-                            // Delete the file from disk
-                            if let Err(e) = std::fs::remove_file(path) {
+                && let Some(action) = app.handle_key(key.code, key.modifiers)
+            {
+                match action {
+                    Action::Delete(ref path) => {
+                        // Delete the file from disk
+                        match std::fs::remove_file(path) {
+                            Ok(()) => {
+                                // Only remove from list if file deletion succeeded
+                                app.remove_selected_from_list();
+                            }
+                            Err(e) => {
                                 let _ = debug_log::log_debug(&format!(
                                     "Failed to delete {}: {}",
                                     path.display(),
                                     e
                                 ));
+                                // Keep item in list since file still exists
                             }
-                            // Remove from app state
-                            app.delete_selected();
-                            // Continue the loop (don't exit TUI)
                         }
-                        Action::Select(ref path) => {
-                            let _ = debug_log::log_selected_path(path);
-                            return Ok(action);
-                        }
-                        Action::Quit => return Ok(action),
+                        // Continue the loop (don't exit TUI)
                     }
+                    Action::Select(ref path) => {
+                        let _ = debug_log::log_selected_path(path);
+                        return Ok(action);
+                    }
+                    Action::Quit => return Ok(action),
                 }
+            }
         }
     }
 }
@@ -544,23 +555,29 @@ pub fn run_with_loader(
         if event::poll(Duration::from_millis(50)).map_err(|e| AppError::Io(io::Error::other(e)))?
             && let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))?
             && key.kind == KeyEventKind::Press
-            && let Some(action) = app.handle_key(key.code, key.modifiers) {
-                match action {
-                    Action::Delete(ref path) => {
-                        // Delete the file from disk
-                        if let Err(e) = std::fs::remove_file(path) {
+            && let Some(action) = app.handle_key(key.code, key.modifiers)
+        {
+            match action {
+                Action::Delete(ref path) => {
+                    // Delete the file from disk
+                    match std::fs::remove_file(path) {
+                        Ok(()) => {
+                            // Only remove from list if file deletion succeeded
+                            app.remove_selected_from_list();
+                        }
+                        Err(e) => {
                             let _ = debug_log::log_debug(&format!(
                                 "Failed to delete {}: {}",
                                 path.display(),
                                 e
                             ));
+                            // Keep item in list since file still exists
                         }
-                        // Remove from app state
-                        app.delete_selected();
-                        // Continue the loop (don't exit TUI)
                     }
-                    _ => return Ok((action, app.into_conversations())),
+                    // Continue the loop (don't exit TUI)
                 }
+                _ => return Ok((action, app.into_conversations())),
             }
+        }
     }
 }
