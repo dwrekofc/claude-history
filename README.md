@@ -157,6 +157,26 @@ reasoning process.
 If you want to continue a conversation, launch `claude-history` with `--resume`
 and it will hand off to `claude --resume <conversation-id>`.
 
+You can configure default arguments to pass to the `claude` command every time
+you resume a conversation. This is useful if you typically run Claude with
+specific flags (like `--dangerously-skip-permissions`) and want them applied
+automatically when resuming:
+
+```toml
+# ~/.config/claude-history/config.toml
+[resume]
+default_args = ["--dangerously-skip-permissions"]
+```
+
+With this configuration, when you resume a conversation, it will run:
+```sh
+claude --resume <conversation-id> --dangerously-skip-permissions
+```
+
+This provides a cleaner alternative to shell aliases, as the arguments are
+applied specifically when resuming through `claude-history`, without affecting
+how you normally invoke Claude.
+
 ### Markdown rendering
 
 Claude's responses are rendered with markdown formatting for better terminal
