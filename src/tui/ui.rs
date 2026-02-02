@@ -1,5 +1,5 @@
 use crate::tui::app::{App, LoadingState, Mode};
-use crate::tui::search::{is_word_separator, normalize_for_search};
+use crate::tui::search::is_word_separator;
 use chrono::{DateTime, Local};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use ratatui::prelude::*;
@@ -115,9 +115,8 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect) {
 
 fn render_list(frame: &mut Frame, app: &App, area: Rect) {
     let width = area.width as usize;
-    // Normalize query and split into words once for the entire render pass
-    let query_normalized = normalize_for_search(app.query().trim());
-    let query_words: Vec<&str> = query_normalized.split_whitespace().collect();
+    // Use cached query words instead of reparsing
+    let query_words: Vec<&str> = app.query_words().iter().map(|s| s.as_str()).collect();
 
     // Calculate visible range FIRST (before building any items)
     // When searching, items may have 4 lines (with context), so use 4 lines per item
@@ -204,7 +203,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             };
 
             // Build header with highlighted project name
-            let mut header_spans = vec![Span::styled(indicator.to_string(), indicator_style)];
+            let mut header_spans = vec![Span::styled(indicator, indicator_style)];
             header_spans.extend(highlight_text(
                 &project_part,
                 &query_words,
@@ -242,7 +241,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
 
             // Build preview with highlighted matches
             let preview_style = Style::default().fg(Color::Rgb(130, 130, 130));
-            let mut preview_spans = vec![Span::styled(indicator.to_string(), indicator_style)];
+            let mut preview_spans = vec![Span::styled(indicator, indicator_style)];
             preview_spans.extend(highlight_text(
                 &truncated_preview,
                 &query_words,
@@ -253,7 +252,8 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
             let preview = Line::from(preview_spans).style(selection_bg);
 
             // Check for hidden matches and build context line if needed
-            let context_line = if !query_words.is_empty() {
+            // Only compute for selected row to avoid expensive full-text scanning
+            let context_line = if !query_words.is_empty() && is_selected {
                 if let Some((match_pos, match_char_len)) =
                     find_hidden_match(&conv.full_text, &truncated_preview, &query_words)
                 {
@@ -280,8 +280,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                     let context_base_style = Style::default().fg(Color::Rgb(100, 100, 100));
                     let context_highlight_style = Style::default().fg(Color::Rgb(60, 160, 140)); // Dimmer cyan
 
-                    let mut context_spans =
-                        vec![Span::styled(indicator.to_string(), indicator_style)];
+                    let mut context_spans = vec![Span::styled(indicator, indicator_style)];
                     context_spans.extend(highlight_text(
                         &truncated_context,
                         &query_words,
@@ -299,7 +298,7 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
 
             // Separator line: dim horizontal rule (full width)
             let separator = Line::from(Span::styled(
-                separator_str.clone(),
+                separator_str.as_str(),
                 Style::default().fg(Color::Rgb(50, 50, 50)),
             ));
 

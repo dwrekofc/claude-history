@@ -12,7 +12,15 @@ pub struct SearchableConversation {
 
 /// Normalize text for search: lowercase and replace underscores with spaces
 pub fn normalize_for_search(text: &str) -> String {
-    text.to_lowercase().replace('_', " ")
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch == '_' {
+            out.push(' ');
+        } else {
+            out.extend(ch.to_lowercase());
+        }
+    }
+    out
 }
 
 /// Check if a character is a word separator for search purposes
@@ -47,6 +55,10 @@ pub fn search(
     }
 
     let query_lower = normalize_for_search(query);
+    let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+    if query_words.is_empty() {
+        return (0..conversations.len()).collect();
+    }
 
     // Score all conversations in parallel
     let mut scored: Vec<(usize, f64, DateTime<Local>)> = searchable
@@ -54,7 +66,7 @@ pub fn search(
         .filter_map(|s| {
             let score = score_text(
                 &s.text_lower,
-                &query_lower,
+                &query_words,
                 conversations[s.index].timestamp,
                 now,
             );
@@ -80,28 +92,38 @@ pub fn search(
 /// Each query word must be a prefix of at least one word in the text (AND logic).
 fn score_text(
     text_lower: &str,
-    query_lower: &str,
+    query_words: &[&str],
     timestamp: DateTime<Local>,
     now: DateTime<Local>,
 ) -> f64 {
-    let query_words: Vec<&str> = query_lower.split_whitespace().collect();
     if query_words.is_empty() {
         return 0.0;
     }
 
-    // Each query word must prefix-match at least one text word (lazy iteration)
-    for query_word in &query_words {
-        let has_match = text_lower
-            .split_whitespace()
-            .any(|text_word| text_word.starts_with(query_word));
-
-        if !has_match {
+    // Fast rejection: if a query word isn't present as substring, skip expensive checking
+    for &qw in query_words {
+        if !text_lower.contains(qw) {
             return 0.0;
         }
     }
 
-    // Score is number of matched query words times recency
-    (query_words.len() as f64) * recency_multiplier(timestamp, now)
+    // Single-pass word matching with tracking
+    let mut matched = vec![false; query_words.len()];
+    let mut remaining = query_words.len();
+
+    for text_word in text_lower.split_whitespace() {
+        for (i, &qw) in query_words.iter().enumerate() {
+            if !matched[i] && text_word.starts_with(qw) {
+                matched[i] = true;
+                remaining -= 1;
+                if remaining == 0 {
+                    return (query_words.len() as f64) * recency_multiplier(timestamp, now);
+                }
+            }
+        }
+    }
+
+    0.0
 }
 
 /// Calculate recency multiplier based on age

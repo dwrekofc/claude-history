@@ -50,6 +50,8 @@ pub struct App {
     selected: Option<usize>,
     /// Current search query
     query: String,
+    /// Parsed and normalized query words (cached for render performance)
+    query_words: Vec<String>,
     /// Cursor position in query (character index, not byte)
     cursor_pos: usize,
     /// Whether to use relative time display
@@ -73,6 +75,7 @@ impl App {
             filtered,
             selected,
             query: String::new(),
+            query_words: Vec::new(),
             cursor_pos: 0,
             use_relative_time,
             loading_state: LoadingState::Ready,
@@ -88,6 +91,7 @@ impl App {
             filtered: Vec::new(),
             selected: None,
             query: String::new(),
+            query_words: Vec::new(),
             cursor_pos: 0,
             use_relative_time,
             loading_state: LoadingState::Loading { loaded: 0 },
@@ -170,6 +174,13 @@ impl App {
         } else {
             Some(0)
         };
+
+        // Cache parsed query words for render performance
+        let query_normalized = search::normalize_for_search(self.query.trim());
+        self.query_words = query_normalized
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
     }
 
     /// Move selection up
@@ -241,6 +252,10 @@ impl App {
 
     pub fn query(&self) -> &str {
         &self.query
+    }
+
+    pub fn query_words(&self) -> &[String] {
+        &self.query_words
     }
 
     pub fn use_relative_time(&self) -> bool {
@@ -480,23 +495,31 @@ impl App {
                 None
             }
             KeyCode::Backspace => {
+                let mut changed = false;
                 if self.cursor_pos > 0
                     && let Some((byte_pos, _)) = self.query.char_indices().nth(self.cursor_pos - 1)
                 {
                     self.query.remove(byte_pos);
                     self.cursor_pos -= 1;
+                    changed = true;
                 }
-                self.update_filter();
+                if changed {
+                    self.update_filter();
+                }
                 None
             }
             KeyCode::Delete => {
+                let mut changed = false;
                 let len = self.query.chars().count();
                 if self.cursor_pos < len
                     && let Some((byte_pos, _)) = self.query.char_indices().nth(self.cursor_pos)
                 {
                     self.query.remove(byte_pos);
+                    changed = true;
                 }
-                self.update_filter();
+                if changed {
+                    self.update_filter();
+                }
                 None
             }
             _ => None,
