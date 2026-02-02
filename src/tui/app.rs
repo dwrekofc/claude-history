@@ -20,13 +20,74 @@ pub enum Action {
     Quit,
 }
 
-/// App mode - normal browsing or confirming an action
+/// Dialog overlay mode (for confirmations, menus)
 #[derive(Clone, Debug, PartialEq)]
-pub enum Mode {
-    /// Normal list browsing
-    Normal,
+pub enum DialogMode {
+    /// No dialog shown
+    None,
     /// Confirming deletion of the selected conversation
     ConfirmDelete,
+}
+
+/// Main application mode
+#[derive(Clone, Debug)]
+pub enum AppMode {
+    /// List mode - browsing conversations
+    List,
+    /// View mode - reading a conversation
+    View(ViewState),
+}
+
+/// State for the conversation viewer
+#[derive(Clone, Debug)]
+pub struct ViewState {
+    /// Path to the conversation file (stable identity)
+    pub conversation_path: PathBuf,
+    /// Current scroll position (line offset)
+    pub scroll_offset: usize,
+    /// Pre-rendered conversation lines
+    pub rendered_lines: Vec<RenderedLine>,
+    /// Total content height in lines
+    pub total_lines: usize,
+    /// Whether to show tool calls
+    pub show_tools: bool,
+    /// Whether to show thinking blocks
+    pub show_thinking: bool,
+    /// Content width used for rendering (for resize detection)
+    pub content_width: usize,
+    /// Search mode state
+    pub search_mode: ViewSearchMode,
+    /// Current search query
+    pub search_query: String,
+    /// Line indices with matches
+    pub search_matches: Vec<usize>,
+    /// Current match index
+    pub current_match: usize,
+}
+
+/// Search mode within view
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum ViewSearchMode {
+    #[default]
+    Off,
+    /// Typing search query
+    Typing,
+    /// Search active, navigating results
+    Active,
+}
+
+/// A single rendered line with its spans
+#[derive(Clone, Debug)]
+pub struct RenderedLine {
+    pub spans: Vec<(String, LineStyle)>,
+}
+
+/// Style information for a span
+#[derive(Clone, Debug, Default)]
+pub struct LineStyle {
+    pub fg: Option<(u8, u8, u8)>,
+    pub bold: bool,
+    pub dimmed: bool,
 }
 
 /// Loading state for the TUI
@@ -58,8 +119,12 @@ pub struct App {
     use_relative_time: bool,
     /// Loading state
     loading_state: LoadingState,
-    /// Current app mode (normal or confirming deletion)
-    mode: Mode,
+    /// Current dialog overlay (confirm, menu)
+    dialog_mode: DialogMode,
+    /// Main app mode (list or view)
+    app_mode: AppMode,
+    /// Status message with timestamp for auto-clear
+    status_message: Option<(String, std::time::Instant)>,
 }
 
 impl App {
@@ -79,7 +144,9 @@ impl App {
             cursor_pos: 0,
             use_relative_time,
             loading_state: LoadingState::Ready,
-            mode: Mode::Normal,
+            dialog_mode: DialogMode::None,
+            app_mode: AppMode::List,
+            status_message: None,
         }
     }
 
@@ -95,7 +162,9 @@ impl App {
             cursor_pos: 0,
             use_relative_time,
             loading_state: LoadingState::Loading { loaded: 0 },
-            mode: Mode::Normal,
+            dialog_mode: DialogMode::None,
+            app_mode: AppMode::List,
+            status_message: None,
         }
     }
 
@@ -267,8 +336,16 @@ impl App {
         self.use_relative_time
     }
 
-    pub fn mode(&self) -> &Mode {
-        &self.mode
+    pub fn dialog_mode(&self) -> &DialogMode {
+        &self.dialog_mode
+    }
+
+    pub fn app_mode(&self) -> &AppMode {
+        &self.app_mode
+    }
+
+    pub fn status_message(&self) -> Option<&(String, std::time::Instant)> {
+        self.status_message.as_ref()
     }
 
     pub fn cursor_pos(&self) -> usize {
@@ -339,11 +416,11 @@ impl App {
     fn handle_confirm_key(&mut self, code: KeyCode) -> Option<Action> {
         match code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                self.mode = Mode::Normal;
+                self.dialog_mode = DialogMode::None;
                 self.get_selected_path().map(Action::Delete)
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                self.mode = Mode::Normal;
+                self.dialog_mode = DialogMode::None;
                 None
             }
             _ => None,
@@ -351,12 +428,221 @@ impl App {
     }
 
     /// Handle a key event, returns Some(Action) if the app should exit
-    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
-        // Handle confirmation mode first
-        if self.mode == Mode::ConfirmDelete {
+    /// viewport_height is the visible content area height for view mode scrolling
+    pub fn handle_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        viewport_height: usize,
+    ) -> Option<Action> {
+        // Handle confirmation dialog first (applies to both modes)
+        if self.dialog_mode == DialogMode::ConfirmDelete {
             return self.handle_confirm_key(code);
         }
 
+        // Delegate based on app mode
+        match &self.app_mode {
+            AppMode::View(_) => self.handle_view_key(code, modifiers, viewport_height),
+            AppMode::List => self.handle_list_key(code, modifiers),
+        }
+    }
+
+    /// Handle key events in view mode
+    fn handle_view_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        viewport_height: usize,
+    ) -> Option<Action> {
+        // First check if we're in search typing mode
+        if let AppMode::View(ref state) = self.app_mode
+            && state.search_mode == ViewSearchMode::Typing
+        {
+            return self.handle_search_typing_key(code);
+        }
+
+        let state = match &mut self.app_mode {
+            AppMode::View(s) => s,
+            _ => return None,
+        };
+
+        let max_scroll = state.total_lines.saturating_sub(viewport_height);
+
+        match code {
+            // Exit view mode (or clear search if active)
+            KeyCode::Esc => {
+                // If search is active, clear it first before exiting view
+                if let AppMode::View(ref mut state) = self.app_mode
+                    && state.search_mode == ViewSearchMode::Active {
+                        state.search_mode = ViewSearchMode::Off;
+                        state.search_matches.clear();
+                        state.search_query.clear();
+                        return None;
+                    }
+                self.app_mode = AppMode::List;
+                None
+            }
+
+            KeyCode::Char('q') => {
+                self.app_mode = AppMode::List;
+                None
+            }
+
+            // Scroll down one line
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.scroll_offset = (state.scroll_offset + 1).min(max_scroll);
+                None
+            }
+
+            // Scroll up one line
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.scroll_offset = state.scroll_offset.saturating_sub(1);
+                None
+            }
+
+            // Scroll down half page
+            KeyCode::Char('d') if !modifiers.contains(KeyModifiers::CONTROL) => {
+                let half_page = viewport_height / 2;
+                state.scroll_offset = (state.scroll_offset + half_page).min(max_scroll);
+                None
+            }
+
+            // Scroll up half page
+            KeyCode::Char('u') => {
+                let half_page = viewport_height / 2;
+                state.scroll_offset = state.scroll_offset.saturating_sub(half_page);
+                None
+            }
+
+            // Page down
+            KeyCode::PageDown => {
+                state.scroll_offset = (state.scroll_offset + viewport_height).min(max_scroll);
+                None
+            }
+
+            // Page up
+            KeyCode::PageUp => {
+                state.scroll_offset = state.scroll_offset.saturating_sub(viewport_height);
+                None
+            }
+
+            // Jump to top
+            KeyCode::Char('g') | KeyCode::Home => {
+                state.scroll_offset = 0;
+                None
+            }
+
+            // Jump to bottom
+            KeyCode::Char('G') | KeyCode::End => {
+                state.scroll_offset = max_scroll;
+                None
+            }
+
+            // Start search
+            KeyCode::Char('/') => {
+                self.start_view_search();
+                None
+            }
+
+            // Next match
+            KeyCode::Char('n') if !modifiers.contains(KeyModifiers::CONTROL) => {
+                if let AppMode::View(ref state) = self.app_mode
+                    && state.search_mode == ViewSearchMode::Active
+                {
+                    self.next_search_match(viewport_height);
+                }
+                None
+            }
+
+            // Previous match
+            KeyCode::Char('N') => {
+                if let AppMode::View(ref state) = self.app_mode
+                    && state.search_mode == ViewSearchMode::Active
+                {
+                    self.prev_search_match(viewport_height);
+                }
+                None
+            }
+
+            // Toggle tools
+            KeyCode::Char('t') => {
+                self.toggle_view_tools();
+                None
+            }
+
+            // Toggle thinking
+            KeyCode::Char('T') => {
+                self.toggle_view_thinking();
+                None
+            }
+
+            // Show path
+            KeyCode::Char('p') => {
+                if let AppMode::View(ref state) = self.app_mode {
+                    self.status_message = Some((
+                        state.conversation_path.display().to_string(),
+                        std::time::Instant::now(),
+                    ));
+                }
+                None
+            }
+
+            // Ctrl+D - delete (same as list mode)
+            KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.dialog_mode = DialogMode::ConfirmDelete;
+                None
+            }
+
+            // Ctrl+R - resume
+            KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.get_selected_path().map(Action::Resume)
+            }
+
+            _ => None,
+        }
+    }
+
+    /// Handle key events while typing a search query
+    fn handle_search_typing_key(&mut self, code: KeyCode) -> Option<Action> {
+        match code {
+            KeyCode::Char(c) => {
+                if let AppMode::View(ref mut state) = self.app_mode {
+                    state.search_query.push(c);
+                }
+                self.update_search_results();
+                None
+            }
+            KeyCode::Backspace => {
+                if let AppMode::View(ref mut state) = self.app_mode {
+                    state.search_query.pop();
+                }
+                self.update_search_results();
+                None
+            }
+            KeyCode::Enter => {
+                if let AppMode::View(ref mut state) = self.app_mode {
+                    if !state.search_matches.is_empty() {
+                        state.search_mode = ViewSearchMode::Active;
+                    } else {
+                        state.search_mode = ViewSearchMode::Off;
+                    }
+                }
+                None
+            }
+            KeyCode::Esc => {
+                if let AppMode::View(ref mut state) = self.app_mode {
+                    state.search_mode = ViewSearchMode::Off;
+                    state.search_query.clear();
+                    state.search_matches.clear();
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Handle key events in list mode
+    fn handle_list_key(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
         // During loading, allow navigation and typing but not Enter selection
         if self.is_loading() {
             return match code {
@@ -441,7 +727,8 @@ impl App {
         // Normal handling when ready
         match code {
             KeyCode::Esc => Some(Action::Quit),
-            KeyCode::Enter => self.get_selected_path().map(Action::Select),
+            // Enter now triggers view mode entry (handled in run loop)
+            KeyCode::Enter => None,
             KeyCode::Left => {
                 self.cursor_left();
                 None
@@ -485,12 +772,16 @@ impl App {
             }
             KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.get_selected_path().is_some() {
-                    self.mode = Mode::ConfirmDelete;
+                    self.dialog_mode = DialogMode::ConfirmDelete;
                 }
                 None
             }
             KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
                 self.get_selected_path().map(Action::Resume)
+            }
+            // Ctrl+O - select and exit (for scripting, --show-path)
+            KeyCode::Char('o') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.get_selected_path().map(Action::Select)
             }
             KeyCode::Char(c) => {
                 // Insert at cursor position
@@ -536,6 +827,178 @@ impl App {
             _ => None,
         }
     }
+
+    /// Enter view mode for the currently selected conversation
+    pub fn enter_view_mode(&mut self, content_width: usize) {
+        use crate::tui::viewer::{RenderOptions, render_conversation};
+
+        let Some(selected) = self.selected else {
+            return;
+        };
+        let Some(&conv_idx) = self.filtered.get(selected) else {
+            return;
+        };
+        let path = self.conversations[conv_idx].path.clone();
+
+        let options = RenderOptions {
+            show_tools: false,
+            show_thinking: false,
+            content_width,
+        };
+
+        match render_conversation(&path, &options) {
+            Ok(rendered_lines) => {
+                let total_lines = rendered_lines.len();
+                self.app_mode = AppMode::View(ViewState {
+                    conversation_path: path,
+                    scroll_offset: 0,
+                    rendered_lines,
+                    total_lines,
+                    show_tools: false,
+                    show_thinking: false,
+                    content_width,
+                    search_mode: ViewSearchMode::Off,
+                    search_query: String::new(),
+                    search_matches: Vec::new(),
+                    current_match: 0,
+                });
+            }
+            Err(e) => {
+                self.status_message =
+                    Some((format!("Failed to open: {}", e), std::time::Instant::now()));
+            }
+        }
+    }
+
+    /// Exit view mode and return to list
+    pub fn exit_view_mode(&mut self) {
+        self.app_mode = AppMode::List;
+    }
+
+    /// Start search mode in view
+    fn start_view_search(&mut self) {
+        if let AppMode::View(ref mut state) = self.app_mode {
+            state.search_mode = ViewSearchMode::Typing;
+            state.search_query.clear();
+            state.search_matches.clear();
+            state.current_match = 0;
+        }
+    }
+
+    /// Update search results based on current query
+    fn update_search_results(&mut self) {
+        if let AppMode::View(ref mut state) = self.app_mode {
+            let query_lower = state.search_query.to_lowercase();
+            if query_lower.is_empty() {
+                state.search_matches.clear();
+                return;
+            }
+
+            state.search_matches = state
+                .rendered_lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| {
+                    line.spans
+                        .iter()
+                        .any(|(text, _)| text.to_lowercase().contains(&query_lower))
+                })
+                .map(|(i, _)| i)
+                .collect();
+
+            // Jump to first match if any
+            if !state.search_matches.is_empty() {
+                state.current_match = 0;
+                state.scroll_offset = state.search_matches[0];
+            }
+        }
+    }
+
+    /// Go to next search match
+    fn next_search_match(&mut self, viewport_height: usize) {
+        if let AppMode::View(ref mut state) = self.app_mode {
+            if state.search_matches.is_empty() {
+                return;
+            }
+            state.current_match = (state.current_match + 1) % state.search_matches.len();
+            let match_line = state.search_matches[state.current_match];
+            // Scroll to show match in viewport
+            if match_line < state.scroll_offset
+                || match_line >= state.scroll_offset + viewport_height
+            {
+                state.scroll_offset = match_line;
+            }
+        }
+    }
+
+    /// Go to previous search match
+    fn prev_search_match(&mut self, viewport_height: usize) {
+        if let AppMode::View(ref mut state) = self.app_mode {
+            if state.search_matches.is_empty() {
+                return;
+            }
+            state.current_match = if state.current_match == 0 {
+                state.search_matches.len() - 1
+            } else {
+                state.current_match - 1
+            };
+            let match_line = state.search_matches[state.current_match];
+            if match_line < state.scroll_offset
+                || match_line >= state.scroll_offset + viewport_height
+            {
+                state.scroll_offset = match_line;
+            }
+        }
+    }
+
+    /// Toggle tools visibility in view mode
+    fn toggle_view_tools(&mut self) {
+        if let AppMode::View(ref mut state) = self.app_mode {
+            state.show_tools = !state.show_tools;
+            self.re_render_view();
+        }
+    }
+
+    /// Toggle thinking visibility in view mode
+    fn toggle_view_thinking(&mut self) {
+        if let AppMode::View(ref mut state) = self.app_mode {
+            state.show_thinking = !state.show_thinking;
+            self.re_render_view();
+        }
+    }
+
+    /// Re-render the view with current toggle settings
+    fn re_render_view(&mut self) {
+        use crate::tui::viewer::{RenderOptions, render_conversation};
+
+        if let AppMode::View(ref mut state) = self.app_mode {
+            let options = RenderOptions {
+                show_tools: state.show_tools,
+                show_thinking: state.show_thinking,
+                content_width: state.content_width,
+            };
+
+            if let Ok(lines) = render_conversation(&state.conversation_path, &options) {
+                let old_scroll = state.scroll_offset;
+                state.total_lines = lines.len();
+                state.rendered_lines = lines;
+                // Clamp scroll offset to new content bounds
+                let viewport_height = 20; // Approximate, will be corrected on next frame
+                let max_scroll = state.total_lines.saturating_sub(viewport_height);
+                state.scroll_offset = old_scroll.min(max_scroll);
+            }
+        }
+    }
+
+    /// Check if view needs re-render due to width change
+    pub fn check_view_resize(&mut self, new_content_width: usize) {
+        if let AppMode::View(ref mut state) = self.app_mode
+            && state.content_width != new_content_width
+        {
+            state.content_width = new_content_width;
+            self.re_render_view();
+        }
+    }
 }
 
 /// RAII guard to ensure terminal is restored on exit
@@ -574,6 +1037,9 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Name column width for ledger-style display
+const NAME_WIDTH: usize = 9;
+
 /// Run the TUI and return the selected conversation path or None if cancelled
 pub fn run(conversations: Vec<Conversation>, use_relative_time: bool) -> Result<Action> {
     // Set up panic hook to restore terminal
@@ -588,41 +1054,60 @@ pub fn run(conversations: Vec<Conversation>, use_relative_time: bool) -> Result<
     let mut app = App::new(conversations, use_relative_time);
 
     loop {
+        let frame_area = guard.terminal.get_frame().area();
+        let viewport_height = frame_area.height.saturating_sub(3) as usize; // Subtract header/status
+        let content_width = (frame_area.width as usize).saturating_sub(NAME_WIDTH + 3);
+
+        // Check for resize in view mode
+        app.check_view_resize(content_width);
+
         guard.terminal.draw(|frame| ui::render(frame, &app))?;
 
         if let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))? {
             // Only handle key press events (not release)
-            if key.kind == KeyEventKind::Press
-                && let Some(action) = app.handle_key(key.code, key.modifiers)
-            {
-                match action {
-                    Action::Delete(ref path) => {
-                        // Delete the file from disk
-                        match std::fs::remove_file(path) {
-                            Ok(()) => {
-                                // Only remove from list if file deletion succeeded
-                                app.remove_selected_from_list();
+            if key.kind == KeyEventKind::Press {
+                // Check for Enter in list mode - enter view mode
+                if matches!(app.app_mode(), AppMode::List)
+                    && key.code == KeyCode::Enter
+                    && !app.is_loading()
+                    && app.selected().is_some()
+                {
+                    app.enter_view_mode(content_width);
+                    continue;
+                }
+
+                if let Some(action) = app.handle_key(key.code, key.modifiers, viewport_height) {
+                    match action {
+                        Action::Delete(ref path) => {
+                            // Delete the file from disk
+                            match std::fs::remove_file(path) {
+                                Ok(()) => {
+                                    // Only remove from list if file deletion succeeded
+                                    app.remove_selected_from_list();
+                                    // If in view mode, return to list
+                                    app.exit_view_mode();
+                                }
+                                Err(e) => {
+                                    let _ = debug_log::log_debug(&format!(
+                                        "Failed to delete {}: {}",
+                                        path.display(),
+                                        e
+                                    ));
+                                    // Keep item in list since file still exists
+                                }
                             }
-                            Err(e) => {
-                                let _ = debug_log::log_debug(&format!(
-                                    "Failed to delete {}: {}",
-                                    path.display(),
-                                    e
-                                ));
-                                // Keep item in list since file still exists
-                            }
+                            // Continue the loop (don't exit TUI)
                         }
-                        // Continue the loop (don't exit TUI)
+                        Action::Select(ref path) => {
+                            let _ = debug_log::log_selected_path(path);
+                            return Ok(action);
+                        }
+                        Action::Resume(ref path) => {
+                            let _ = debug_log::log_selected_path(path);
+                            return Ok(action);
+                        }
+                        Action::Quit => return Ok(action),
                     }
-                    Action::Select(ref path) => {
-                        let _ = debug_log::log_selected_path(path);
-                        return Ok(action);
-                    }
-                    Action::Resume(ref path) => {
-                        let _ = debug_log::log_selected_path(path);
-                        return Ok(action);
-                    }
-                    Action::Quit => return Ok(action),
                 }
             }
         }
@@ -684,6 +1169,13 @@ pub fn run_with_loader(
             }
         }
 
+        let frame_area = guard.terminal.get_frame().area();
+        let viewport_height = frame_area.height.saturating_sub(3) as usize;
+        let content_width = (frame_area.width as usize).saturating_sub(NAME_WIDTH + 3);
+
+        // Check for resize in view mode
+        app.check_view_resize(content_width);
+
         // Render current state
         guard.terminal.draw(|frame| ui::render(frame, &app))?;
 
@@ -691,28 +1183,41 @@ pub fn run_with_loader(
         if event::poll(Duration::from_millis(50)).map_err(|e| AppError::Io(io::Error::other(e)))?
             && let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))?
             && key.kind == KeyEventKind::Press
-            && let Some(action) = app.handle_key(key.code, key.modifiers)
         {
-            match action {
-                Action::Delete(ref path) => {
-                    // Delete the file from disk
-                    match std::fs::remove_file(path) {
-                        Ok(()) => {
-                            // Only remove from list if file deletion succeeded
-                            app.remove_selected_from_list();
+            // Check for Enter in list mode - enter view mode
+            if matches!(app.app_mode(), AppMode::List)
+                && key.code == KeyCode::Enter
+                && !app.is_loading()
+                && app.selected().is_some()
+            {
+                app.enter_view_mode(content_width);
+                continue;
+            }
+
+            if let Some(action) = app.handle_key(key.code, key.modifiers, viewport_height) {
+                match action {
+                    Action::Delete(ref path) => {
+                        // Delete the file from disk
+                        match std::fs::remove_file(path) {
+                            Ok(()) => {
+                                // Only remove from list if file deletion succeeded
+                                app.remove_selected_from_list();
+                                // If in view mode, return to list
+                                app.exit_view_mode();
+                            }
+                            Err(e) => {
+                                let _ = debug_log::log_debug(&format!(
+                                    "Failed to delete {}: {}",
+                                    path.display(),
+                                    e
+                                ));
+                                // Keep item in list since file still exists
+                            }
                         }
-                        Err(e) => {
-                            let _ = debug_log::log_debug(&format!(
-                                "Failed to delete {}: {}",
-                                path.display(),
-                                e
-                            ));
-                            // Keep item in list since file still exists
-                        }
+                        // Continue the loop (don't exit TUI)
                     }
-                    // Continue the loop (don't exit TUI)
+                    _ => return Ok((action, app.into_conversations())),
                 }
-                _ => return Ok((action, app.into_conversations())),
             }
         }
     }

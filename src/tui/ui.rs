@@ -1,7 +1,10 @@
-use crate::tui::app::{App, LoadingState, Mode};
+use crate::tui::app::{
+    App, AppMode, DialogMode, LineStyle, LoadingState, ViewSearchMode, ViewState,
+};
 use crate::tui::search::is_word_separator;
 use chrono::{DateTime, Local};
 use chrono_humanize::{Accuracy, HumanTime, Tense};
+use ratatui::layout::Position;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph};
 
@@ -10,6 +13,14 @@ const LINES_PER_ITEM: usize = 3;
 
 /// Render the TUI
 pub fn render(frame: &mut Frame, app: &App) {
+    match app.app_mode() {
+        AppMode::List => render_list_mode(frame, app),
+        AppMode::View(state) => render_view_mode(frame, app, state),
+    }
+}
+
+/// Render the list mode (conversation browser)
+fn render_list_mode(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // Outer border wrapping the entire app
@@ -20,8 +31,13 @@ pub fn render(frame: &mut Frame, app: &App) {
     let inner_area = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
-    // Check if we need space for confirmation dialog
-    let (list_area, confirm_area) = if *app.mode() == Mode::ConfirmDelete {
+    // Check if we need space for status message or confirmation dialog
+    let has_status = app
+        .status_message()
+        .is_some_and(|(_, instant)| instant.elapsed() < std::time::Duration::from_secs(3));
+
+    let (list_area, bottom_area) = if *app.dialog_mode() == DialogMode::ConfirmDelete || has_status
+    {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -43,9 +59,278 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     render_list(frame, app, list_area);
 
-    if let Some(area) = confirm_area {
-        render_confirm_dialog(frame, area);
+    if let Some(area) = bottom_area {
+        if *app.dialog_mode() == DialogMode::ConfirmDelete {
+            render_confirm_dialog(frame, area);
+        } else if let Some((msg, _)) = app.status_message() {
+            render_status_message(frame, msg, area);
+        }
     }
+}
+
+fn render_status_message(frame: &mut Frame, msg: &str, area: Rect) {
+    let status_line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(msg, Style::default().fg(Color::Yellow)),
+    ]);
+    let status = Paragraph::new(status_line);
+    frame.render_widget(status, area);
+}
+
+/// Render the view mode (conversation viewer)
+fn render_view_mode(frame: &mut Frame, app: &App, state: &ViewState) {
+    let area = frame.area();
+
+    // Determine if we need extra space for search input
+    let status_height = if state.search_mode == ViewSearchMode::Typing {
+        2
+    } else {
+        1
+    };
+
+    // Layout: header (2 lines) | content | status bar
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),             // Header
+            Constraint::Min(1),                // Content
+            Constraint::Length(status_height), // Status bar (+ search input if typing)
+        ])
+        .split(area);
+
+    render_view_header(frame, app, state, chunks[0]);
+    render_view_content(frame, state, chunks[1]);
+
+    if state.search_mode == ViewSearchMode::Typing {
+        render_search_input(frame, state, chunks[2]);
+    } else {
+        render_view_status_bar(frame, app, state, chunks[2]);
+    }
+
+    // Render dialog overlay if active
+    if *app.dialog_mode() == DialogMode::ConfirmDelete {
+        render_confirm_dialog(frame, chunks[2]);
+    }
+}
+
+fn render_view_header(frame: &mut Frame, app: &App, state: &ViewState, area: Rect) {
+    // Find the conversation by path
+    let conv = app
+        .conversations()
+        .iter()
+        .find(|c| c.path == state.conversation_path);
+
+    let (project, msg_count, timestamp) = if let Some(conv) = conv {
+        let project = conv.project_name.as_deref().unwrap_or("Unknown");
+        let msg_count = if conv.message_count == 1 {
+            "1 message".to_string()
+        } else {
+            format!("{} messages", conv.message_count)
+        };
+        let timestamp = conv.timestamp.format("%Y-%m-%d %H:%M").to_string();
+        (project.to_string(), msg_count, timestamp)
+    } else {
+        ("Unknown".to_string(), "".to_string(), "".to_string())
+    };
+
+    let header_line = Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            format!("[{}]", project),
+            Style::default().fg(Color::Rgb(78, 201, 176)).bold(),
+        ),
+        Span::raw(" "),
+        Span::styled(msg_count, Style::default().fg(Color::Rgb(140, 140, 140))),
+        Span::raw(" · "),
+        Span::styled(timestamp, Style::default().fg(Color::Rgb(140, 140, 140))),
+    ]);
+
+    let header = Paragraph::new(header_line).block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(Style::default().fg(Color::Rgb(60, 60, 60))),
+    );
+
+    frame.render_widget(header, area);
+}
+
+fn render_view_content(frame: &mut Frame, state: &ViewState, area: Rect) {
+    let visible_height = area.height as usize;
+    let query_lower = state.search_query.to_lowercase();
+
+    let visible_lines: Vec<Line> = state
+        .rendered_lines
+        .iter()
+        .enumerate()
+        .skip(state.scroll_offset)
+        .take(visible_height)
+        .map(|(line_idx, rendered)| {
+            let is_current_match = state.search_matches.get(state.current_match) == Some(&line_idx);
+            let has_match = !query_lower.is_empty() && state.search_matches.contains(&line_idx);
+
+            let spans: Vec<Span> = rendered
+                .spans
+                .iter()
+                .flat_map(|(text, style)| {
+                    if has_match && !query_lower.is_empty() {
+                        highlight_search_matches(text, &query_lower, style, is_current_match)
+                    } else {
+                        vec![styled_span(text, style)]
+                    }
+                })
+                .collect();
+
+            Line::from(spans)
+        })
+        .collect();
+
+    let content = Paragraph::new(visible_lines);
+    frame.render_widget(content, area);
+}
+
+fn render_view_status_bar(frame: &mut Frame, app: &App, state: &ViewState, area: Rect) {
+    // Check for status message first
+    if let Some((msg, instant)) = app.status_message()
+        && instant.elapsed() < std::time::Duration::from_secs(3)
+    {
+        let status_line = Line::from(vec![
+            Span::raw("  "),
+            Span::styled(msg, Style::default().fg(Color::Green)),
+        ]);
+        let status = Paragraph::new(status_line).style(Style::default().bg(Color::Rgb(30, 30, 35)));
+        frame.render_widget(status, area);
+        return;
+    }
+
+    let scroll_pos = format!("[{}/{}]", state.scroll_offset + 1, state.total_lines.max(1));
+
+    let tools_status = if state.show_tools { "on" } else { "off" };
+    let thinking_status = if state.show_thinking { "on" } else { "off" };
+
+    let hints = if state.search_mode == ViewSearchMode::Active {
+        "n:next N:prev Esc:clear"
+    } else {
+        "/:search t:tools T:think q:back"
+    };
+
+    let status_line = Line::from(vec![
+        Span::raw("  "),
+        Span::styled(scroll_pos, Style::default().fg(Color::Rgb(140, 140, 140))),
+        Span::raw("  "),
+        Span::styled(
+            format!("t:{} T:{}", tools_status, thinking_status),
+            Style::default().fg(Color::Rgb(80, 80, 80)),
+        ),
+        Span::raw("  "),
+        Span::styled(hints, Style::default().fg(Color::Rgb(80, 80, 80))),
+    ]);
+
+    let status = Paragraph::new(status_line).style(Style::default().bg(Color::Rgb(30, 30, 35)));
+    frame.render_widget(status, area);
+}
+
+fn render_search_input(frame: &mut Frame, state: &ViewState, area: Rect) {
+    let match_info = if state.search_matches.is_empty() {
+        if state.search_query.is_empty() {
+            String::new()
+        } else {
+            " (no matches)".to_string()
+        }
+    } else {
+        format!(
+            " ({}/{})",
+            state.current_match + 1,
+            state.search_matches.len()
+        )
+    };
+
+    let input_line = Line::from(vec![
+        Span::raw("  /"),
+        Span::styled(&state.search_query, Style::default().fg(Color::White)),
+        Span::styled(match_info, Style::default().fg(Color::Rgb(140, 140, 140))),
+    ]);
+
+    let input = Paragraph::new(input_line).style(Style::default().bg(Color::Rgb(30, 30, 35)));
+    frame.render_widget(input, area);
+
+    // Position cursor
+    let cursor_x = area.x + 3 + state.search_query.chars().count() as u16;
+    frame.set_cursor_position(Position::new(cursor_x, area.y));
+}
+
+fn highlight_search_matches(
+    text: &str,
+    query: &str,
+    style: &LineStyle,
+    is_current_match: bool,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let text_lower = text.to_lowercase();
+    let mut last_end = 0;
+
+    // Use char indices to handle Unicode correctly
+    let chars: Vec<char> = text.chars().collect();
+    let chars_lower: Vec<char> = text_lower.chars().collect();
+    let query_chars: Vec<char> = query.chars().collect();
+
+    let mut i = 0;
+    while i <= chars_lower.len().saturating_sub(query_chars.len()) {
+        // Check if query matches at position i
+        let matches = query_chars
+            .iter()
+            .enumerate()
+            .all(|(j, &qc)| i + j < chars_lower.len() && chars_lower[i + j] == qc);
+
+        if matches {
+            // Add text before match
+            if i > last_end {
+                let before: String = chars[last_end..i].iter().collect();
+                spans.push(styled_span(&before, style));
+            }
+
+            // Add matched text with highlight
+            let match_text: String = chars[i..i + query_chars.len()].iter().collect();
+            let match_style = if is_current_match {
+                Style::default().bg(Color::Yellow).fg(Color::Black)
+            } else {
+                Style::default()
+                    .bg(Color::Rgb(78, 201, 176))
+                    .fg(Color::Black)
+            };
+            spans.push(Span::styled(match_text, match_style));
+
+            last_end = i + query_chars.len();
+            i = last_end;
+        } else {
+            i += 1;
+        }
+    }
+
+    // Add remaining text
+    if last_end < chars.len() {
+        let remaining: String = chars[last_end..].iter().collect();
+        spans.push(styled_span(&remaining, style));
+    }
+
+    if spans.is_empty() {
+        vec![styled_span(text, style)]
+    } else {
+        spans
+    }
+}
+
+fn styled_span(text: &str, style: &LineStyle) -> Span<'static> {
+    let mut s = Style::default();
+    if let Some((r, g, b)) = style.fg {
+        s = s.fg(Color::Rgb(r, g, b));
+    }
+    if style.bold {
+        s = s.bold();
+    }
+    if style.dimmed {
+        s = s.fg(Color::Rgb(100, 100, 100));
+    }
+    Span::styled(text.to_string(), s)
 }
 
 fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {

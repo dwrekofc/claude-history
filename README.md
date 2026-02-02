@@ -4,7 +4,8 @@
 
 `claude-history` is a companion CLI for Claude Code. It lets you search recent
 conversations recorded in Claude's local project history with a built-in
-terminal UI, then prints the selected transcript in a tidy, readable format.
+terminal UI, then view the selected transcript directly in the terminal with
+scrolling, search, and export capabilities.
 
 Run it from the project directory you work on with Claude Code and it will
 discover the matching transcript folder automatically.
@@ -45,19 +46,42 @@ search across all transcripts. Each item shows a preview of the conversation and
 match context is highlighted when your search matches content not visible in the
 preview.
 
-### Keyboard navigation
+### Keyboard navigation (List mode)
 
-| Key                     | Action                    |
-| ----------------------- | ------------------------- |
-| `↑` / `↓`               | Move selection            |
-| `←` / `→`               | Move cursor in search     |
-| `Ctrl+P` / `Ctrl+N`     | Move selection (vi-style) |
-| `Page Up` / `Page Down` | Jump by page              |
-| `Home` / `End`          | Jump to first/last        |
-| `Enter`                 | Select conversation       |
-| `Ctrl+R`                | Resume conversation       |
-| `Ctrl+D`                | Delete conversation       |
-| `Esc` / `Ctrl+C`        | Quit                      |
+| Key                     | Action                          |
+| ----------------------- | ------------------------------- |
+| `↑` / `↓`               | Move selection                  |
+| `←` / `→`               | Move cursor in search           |
+| `Ctrl+P` / `Ctrl+N`     | Move selection (vi-style)       |
+| `Page Up` / `Page Down` | Jump by page                    |
+| `Home` / `End`          | Jump to first/last              |
+| `Enter`                 | Open conversation viewer        |
+| `Ctrl+O`                | Select and exit (for scripting) |
+| `Ctrl+R`                | Resume conversation             |
+| `Ctrl+D`                | Delete conversation             |
+| `Esc` / `Ctrl+C`        | Quit                            |
+
+### Keyboard navigation (Viewer mode)
+
+| Key                     | Action                |
+| ----------------------- | --------------------- |
+| `j` / `↓`               | Scroll down           |
+| `k` / `↑`               | Scroll up             |
+| `d`                     | Half page down        |
+| `u`                     | Half page up          |
+| `Page Down`             | Full page down        |
+| `Page Up`               | Full page up          |
+| `g` / `Home`            | Jump to top           |
+| `G` / `End`             | Jump to bottom        |
+| `/`                     | Start search          |
+| `n`                     | Next search match     |
+| `N`                     | Previous search match |
+| `t`                     | Toggle tool calls     |
+| `T`                     | Toggle thinking       |
+| `p`                     | Show file path        |
+| `Ctrl+R`                | Resume conversation   |
+| `Ctrl+D`                | Delete conversation   |
+| `q` / `Esc`             | Return to list        |
 
 ### Search
 
@@ -69,6 +93,21 @@ Search uses fuzzy word matching with the following features:
 - **Multi-word AND logic**: all query words must match
 
 Results are ranked by recency, so recent conversations appear first.
+
+### Conversation viewer
+
+Press `Enter` on a conversation to open the built-in viewer. The viewer displays
+conversations in a ledger-style format with scrolling support.
+
+**Features:**
+- **Scrolling**: Navigate with vim-style keys (`j`/`k`) or arrow keys
+- **Search**: Press `/` to search within the conversation, then `n`/`N` to
+  navigate matches
+- **Toggle tools**: Press `t` to show/hide tool calls
+- **Toggle thinking**: Press `T` to show/hide thinking blocks
+- **Show path**: Press `p` to display the conversation file path
+
+Press `q` or `Esc` to return to the conversation list.
 
 ```
 View Claude conversation history
