@@ -108,8 +108,11 @@ fn render_view_mode(frame: &mut Frame, app: &App, state: &ViewState) {
     }
 
     // Render dialog overlay if active
-    if *app.dialog_mode() == DialogMode::ConfirmDelete {
-        render_confirm_dialog(frame, chunks[2]);
+    match app.dialog_mode() {
+        DialogMode::ConfirmDelete => render_confirm_dialog(frame, chunks[2]),
+        DialogMode::ExportMenu { selected } => render_export_menu(frame, *selected, false),
+        DialogMode::YankMenu { selected } => render_export_menu(frame, *selected, true),
+        DialogMode::None => {}
     }
 }
 
@@ -210,7 +213,7 @@ fn render_view_status_bar(frame: &mut Frame, app: &App, state: &ViewState, area:
     let hints = if state.search_mode == ViewSearchMode::Active {
         "n:next N:prev Esc:clear"
     } else {
-        "/:search t:tools T:think q:back"
+        "/:search e:export y:yank q:back"
     };
 
     let status_line = Line::from(vec![
@@ -399,6 +402,66 @@ fn render_confirm_dialog(frame: &mut Frame, area: Rect) {
     ]);
     let paragraph = Paragraph::new(prompt);
     frame.render_widget(paragraph, area);
+}
+
+fn render_export_menu(frame: &mut Frame, selected: usize, is_yank: bool) {
+    let title = if is_yank {
+        "Copy to clipboard"
+    } else {
+        "Export to file"
+    };
+    let options = [
+        "[1] Ledger (formatted)",
+        "[2] Plain text",
+        "[3] Markdown",
+        "[4] JSONL (raw)",
+    ];
+
+    let area = frame.area();
+    let menu_width = 35;
+    let menu_height = options.len() as u16 + 4; // options + title + border + cancel hint
+
+    // Center the menu
+    let menu_area = Rect {
+        x: (area.width.saturating_sub(menu_width)) / 2,
+        y: (area.height.saturating_sub(menu_height)) / 2,
+        width: menu_width,
+        height: menu_height,
+    };
+
+    // Render background
+    let clear = Block::default().style(Style::default().bg(Color::Rgb(25, 25, 30)));
+    frame.render_widget(clear, menu_area);
+
+    // Render border
+    let block = Block::default()
+        .title(format!(" {} ", title))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(78, 201, 176)));
+
+    let inner = block.inner(menu_area);
+    frame.render_widget(block, menu_area);
+
+    // Render options
+    let mut lines = Vec::new();
+    for (i, opt) in options.iter().enumerate() {
+        let style = if i == selected {
+            Style::default().fg(Color::Rgb(78, 201, 176)).bold()
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let prefix = if i == selected { "▶ " } else { "  " };
+        lines.push(Line::styled(format!("{}{}", prefix, opt), style));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        "  [Esc] Cancel",
+        Style::default().fg(Color::Rgb(100, 100, 100)),
+    ));
+
+    let menu_content = Paragraph::new(lines);
+    frame.render_widget(menu_content, inner);
 }
 
 fn render_list(frame: &mut Frame, app: &App, area: Rect) {

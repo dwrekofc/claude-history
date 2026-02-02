@@ -27,7 +27,19 @@ pub enum DialogMode {
     None,
     /// Confirming deletion of the selected conversation
     ConfirmDelete,
+    /// Export menu (save to file)
+    ExportMenu { selected: usize },
+    /// Yank menu (copy to clipboard)
+    YankMenu { selected: usize },
 }
+
+/// Export format options for menus
+const EXPORT_OPTIONS: [&str; 4] = [
+    "Ledger (formatted)",
+    "Plain text",
+    "Markdown",
+    "JSONL (raw)",
+];
 
 /// Main application mode
 #[derive(Clone, Debug)]
@@ -428,6 +440,92 @@ impl App {
         }
     }
 
+    /// Handle a key event during export/yank menu mode
+    fn handle_menu_key(&mut self, code: KeyCode) -> Option<Action> {
+        let (selected, is_yank) = match &mut self.dialog_mode {
+            DialogMode::ExportMenu { selected } => (selected, false),
+            DialogMode::YankMenu { selected } => (selected, true),
+            _ => return None,
+        };
+
+        match code {
+            // Navigate up
+            KeyCode::Up | KeyCode::Char('k') => {
+                *selected = selected.saturating_sub(1);
+                None
+            }
+            // Navigate down
+            KeyCode::Down | KeyCode::Char('j') => {
+                *selected = (*selected + 1).min(EXPORT_OPTIONS.len() - 1);
+                None
+            }
+            // Number keys for direct selection
+            KeyCode::Char('1') => {
+                self.perform_export(0, is_yank);
+                self.dialog_mode = DialogMode::None;
+                None
+            }
+            KeyCode::Char('2') => {
+                self.perform_export(1, is_yank);
+                self.dialog_mode = DialogMode::None;
+                None
+            }
+            KeyCode::Char('3') => {
+                self.perform_export(2, is_yank);
+                self.dialog_mode = DialogMode::None;
+                None
+            }
+            KeyCode::Char('4') => {
+                self.perform_export(3, is_yank);
+                self.dialog_mode = DialogMode::None;
+                None
+            }
+            // Enter to select current option
+            KeyCode::Enter => {
+                let sel = *selected;
+                self.perform_export(sel, is_yank);
+                self.dialog_mode = DialogMode::None;
+                None
+            }
+            // Escape to cancel
+            KeyCode::Esc => {
+                self.dialog_mode = DialogMode::None;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Perform export or yank operation
+    fn perform_export(&mut self, option: usize, to_clipboard: bool) {
+        let path = match self.get_view_conversation_path() {
+            Some(p) => p,
+            None => return,
+        };
+
+        let format = match crate::tui::export::ExportFormat::from_index(option) {
+            Some(f) => f,
+            None => return,
+        };
+
+        let result = if to_clipboard {
+            crate::tui::export::export_to_clipboard(&path, format)
+        } else {
+            crate::tui::export::export_to_file(&path, format)
+        };
+
+        self.status_message = Some((result.message, std::time::Instant::now()));
+    }
+
+    /// Get the path of the currently viewed conversation
+    fn get_view_conversation_path(&self) -> Option<PathBuf> {
+        if let AppMode::View(ref state) = self.app_mode {
+            Some(state.conversation_path.clone())
+        } else {
+            None
+        }
+    }
+
     /// Handle a key event, returns Some(Action) if the app should exit
     /// viewport_height is the visible content area height for view mode scrolling
     pub fn handle_key(
@@ -436,9 +534,13 @@ impl App {
         modifiers: KeyModifiers,
         viewport_height: usize,
     ) -> Option<Action> {
-        // Handle confirmation dialog first (applies to both modes)
-        if self.dialog_mode == DialogMode::ConfirmDelete {
-            return self.handle_confirm_key(code);
+        // Handle dialogs first
+        match self.dialog_mode {
+            DialogMode::ConfirmDelete => return self.handle_confirm_key(code),
+            DialogMode::ExportMenu { .. } | DialogMode::YankMenu { .. } => {
+                return self.handle_menu_key(code);
+            }
+            DialogMode::None => {}
         }
 
         // Delegate based on app mode
@@ -608,6 +710,18 @@ impl App {
                         }
                     }
                 }
+                None
+            }
+
+            // Open export menu (save to file)
+            KeyCode::Char('e') => {
+                self.dialog_mode = DialogMode::ExportMenu { selected: 0 };
+                None
+            }
+
+            // Open yank menu (copy to clipboard)
+            KeyCode::Char('y') => {
+                self.dialog_mode = DialogMode::YankMenu { selected: 0 };
                 None
             }
 
