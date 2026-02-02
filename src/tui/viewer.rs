@@ -12,6 +12,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 const NAME_WIDTH: usize = 9;
+const WHITE: (u8, u8, u8) = (255, 255, 255);
 const TEAL: (u8, u8, u8) = (78, 201, 176);
 const DIM_TEAL: (u8, u8, u8) = (60, 160, 140);
 const SEPARATOR_COLOR: (u8, u8, u8) = (80, 80, 80);
@@ -95,7 +96,7 @@ fn render_user_message(
 
     if let Some(text) = text {
         let md_lines = render_markdown_to_lines(&text, options.content_width);
-        render_ledger_block_styled(lines, "You", TEAL, true, md_lines);
+        render_ledger_block_styled(lines, "You", WHITE, true, md_lines);
         lines.push(RenderedLine { spans: vec![] }); // Empty line after message
     }
 }
