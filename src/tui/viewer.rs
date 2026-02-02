@@ -20,6 +20,7 @@ const CODE_COLOR: (u8, u8, u8) = (147, 161, 199);
 const GREEN: (u8, u8, u8) = (0, 255, 0);
 const BLUE: (u8, u8, u8) = (100, 149, 237);
 const THINKING_TEXT: (u8, u8, u8) = (140, 145, 150);
+const HEADING_COLOR: (u8, u8, u8) = (180, 190, 200);
 
 /// Options for rendering a conversation
 pub struct RenderOptions {
@@ -476,6 +477,7 @@ impl TuiMarkdownRenderer {
                 MarkdownStyle::Link => style.fg = Some(BLUE),
                 MarkdownStyle::Heading => {
                     style.bold = true;
+                    style.fg = Some(HEADING_COLOR);
                 }
             }
         }
