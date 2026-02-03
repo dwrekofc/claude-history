@@ -608,8 +608,8 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            let summary_style = Style::default().fg(Color::Rgb(100, 100, 100));
-            let summary_highlight_style = Style::default().fg(Color::Rgb(60, 160, 140)); // Dimmer cyan for summary
+            let summary_style = Style::default().fg(Color::Rgb(140, 155, 175)); // Soft slate blue
+            let summary_highlight_style = Style::default().fg(Color::Rgb(78, 201, 176)); // Cyan for highlights
 
             // Highlight style: cyan with bold for selected row
             let highlight_style = if is_selected {
