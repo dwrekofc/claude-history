@@ -1,6 +1,8 @@
 use crate::debug_log;
 use crate::error::{AppError, Result};
-use crate::history::{Conversation, LoaderMessage};
+use crate::history::{
+    Conversation, LoaderMessage, format_short_name_from_path, process_conversation_file,
+};
 use crate::tui::search::{self, SearchableConversation};
 use crate::tui::ui;
 use chrono::Local;
@@ -142,6 +144,8 @@ pub struct App {
     show_tools: bool,
     /// Persistent view setting: whether to show thinking blocks
     show_thinking: bool,
+    /// Whether the app is running in single file mode (direct input, no list)
+    single_file_mode: bool,
 }
 
 impl App {
@@ -171,6 +175,7 @@ impl App {
             status_message: None,
             show_tools,
             show_thinking,
+            single_file_mode: false,
         }
     }
 
@@ -191,6 +196,62 @@ impl App {
             status_message: None,
             show_tools,
             show_thinking,
+            single_file_mode: false,
+        }
+    }
+
+    /// Create a new app for viewing a single file directly
+    pub fn new_single_file(
+        path: PathBuf,
+        use_relative_time: bool,
+        show_tools: bool,
+        show_thinking: bool,
+    ) -> Self {
+        // Parse using the same parser as the main list
+        let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+
+        let mut conversations = Vec::new();
+        let mut filtered = Vec::new();
+        let mut selected = None;
+
+        if let Ok(Some(mut conv)) = process_conversation_file(path.clone(), false, modified, None) {
+            // Set project_name the same way as the loader does
+            let project_path = conv.cwd.clone().unwrap_or_else(|| path.clone());
+            conv.project_name = Some(format_short_name_from_path(&project_path));
+
+            conversations.push(conv);
+            filtered.push(0);
+            selected = Some(0);
+        }
+
+        Self {
+            conversations,
+            searchable: Vec::new(),
+            filtered,
+            selected,
+            query: String::new(),
+            query_words: Vec::new(),
+            cursor_pos: 0,
+            use_relative_time,
+            loading_state: LoadingState::Ready,
+            dialog_mode: DialogMode::None,
+            app_mode: AppMode::View(ViewState {
+                conversation_path: path,
+                scroll_offset: 0,
+                rendered_lines: Vec::new(),
+                total_lines: 0,
+                show_tools,
+                show_thinking,
+                content_width: 0,
+                search_mode: ViewSearchMode::Off,
+                search_query: String::new(),
+                search_matches: Vec::new(),
+                current_match: 0,
+            }),
+            status_message: None,
+            show_tools,
+            show_thinking,
+            single_file_mode: true,
         }
     }
 
@@ -641,11 +702,19 @@ impl App {
                     state.search_query.clear();
                     return None;
                 }
+                // In single file mode, Esc quits the app
+                if self.single_file_mode {
+                    return Some(Action::Quit);
+                }
                 self.app_mode = AppMode::List;
                 None
             }
 
             KeyCode::Char('q') => {
+                // In single file mode, q quits the app
+                if self.single_file_mode {
+                    return Some(Action::Quit);
+                }
                 self.app_mode = AppMode::List;
                 None
             }
@@ -783,15 +852,21 @@ impl App {
                 None
             }
 
-            // Ctrl+D - delete (same as list mode)
+            // Ctrl+D - delete (disabled in single file mode for security)
             KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.dialog_mode = DialogMode::ConfirmDelete;
+                if !self.single_file_mode {
+                    self.dialog_mode = DialogMode::ConfirmDelete;
+                }
                 None
             }
 
-            // Ctrl+R - resume
+            // Ctrl+R - resume (disabled in single file mode)
             KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
-                self.get_selected_path().map(Action::Resume)
+                if self.single_file_mode {
+                    None
+                } else {
+                    self.get_selected_path().map(Action::Resume)
+                }
             }
 
             _ => None,
@@ -1462,6 +1537,43 @@ pub fn run_with_loader(
                     _ => return Ok((action, app.into_conversations())),
                 }
             }
+        }
+    }
+}
+
+/// Run the TUI for a single file (direct input mode)
+pub fn run_single_file(
+    path: PathBuf,
+    use_relative_time: bool,
+    show_tools: bool,
+    show_thinking: bool,
+) -> Result<()> {
+    // Set up panic hook to restore terminal
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = terminal::disable_raw_mode();
+        let _ = crossterm::execute!(io::stdout(), LeaveAlternateScreen);
+        original_hook(panic_info);
+    }));
+
+    let mut guard = TerminalGuard::new()?;
+    let mut app = App::new_single_file(path, use_relative_time, show_tools, show_thinking);
+
+    loop {
+        let frame_area = guard.terminal.get_frame().area();
+        let viewport_height = frame_area.height.saturating_sub(3) as usize;
+        let content_width = (frame_area.width as usize).saturating_sub(NAME_WIDTH + 3);
+
+        // Check for resize in view mode (this triggers initial render too)
+        app.check_view_resize(content_width, viewport_height);
+
+        guard.terminal.draw(|frame| ui::render(frame, &app))?;
+
+        if let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))?
+            && key.kind == KeyEventKind::Press
+            && let Some(Action::Quit) = app.handle_key(key.code, key.modifiers, viewport_height)
+        {
+            return Ok(());
         }
     }
 }

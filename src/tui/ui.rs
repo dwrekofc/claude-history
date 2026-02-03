@@ -117,7 +117,7 @@ fn render_view_mode(frame: &mut Frame, app: &App, state: &ViewState) {
 }
 
 fn render_view_header(frame: &mut Frame, app: &App, state: &ViewState, area: Rect) {
-    // Find the conversation by path
+    // Find the conversation by path (works for both list and single file mode)
     let conv = app
         .conversations()
         .iter()
@@ -133,7 +133,14 @@ fn render_view_header(frame: &mut Frame, app: &App, state: &ViewState, area: Rec
         let timestamp = conv.timestamp.format("%Y-%m-%d %H:%M").to_string();
         (project.to_string(), msg_count, timestamp)
     } else {
-        ("Unknown".to_string(), "".to_string(), "".to_string())
+        // Fallback if parsing failed
+        let project = state
+            .conversation_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
+            .to_string();
+        (project, "".to_string(), "".to_string())
     };
 
     let header_line = Line::from(vec![

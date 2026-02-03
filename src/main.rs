@@ -101,6 +101,29 @@ fn run() -> Result<()> {
         return display::render_to_terminal(render_path, &display_options);
     }
 
+    // Handle direct file input mode
+    if let Some(ref input_file) = args.input_file {
+        if !input_file.exists() {
+            return Err(AppError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("File not found: {}", input_file.display()),
+            )));
+        }
+        if !input_file.is_file() {
+            return Err(AppError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Not a file: {}", input_file.display()),
+            )));
+        }
+        tui::run_single_file(
+            input_file.clone(),
+            use_relative_time,
+            show_tools,
+            show_thinking,
+        )?;
+        return Ok(());
+    }
+
     // Determine how to load conversations based on mode
     let (conversations, selected_path) = if args.global {
         // Global Search (-g) - use streaming loader for instant startup

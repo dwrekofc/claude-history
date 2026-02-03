@@ -64,25 +64,25 @@ preview.
 
 ### Keyboard navigation (Viewer mode)
 
-| Key                     | Action                |
-| ----------------------- | --------------------- |
-| `j` / `↓`               | Scroll down           |
-| `k` / `↑`               | Scroll up             |
-| `d`                     | Half page down        |
-| `u`                     | Half page up          |
-| `Page Down`             | Full page down        |
-| `Page Up`               | Full page up          |
-| `g` / `Home`            | Jump to top           |
-| `G` / `End`             | Jump to bottom        |
-| `/`                     | Start search          |
-| `n`                     | Next search match     |
-| `N`                     | Previous search match |
-| `t`                     | Toggle tool calls     |
-| `T`                     | Toggle thinking       |
-| `p`                     | Show file path        |
-| `Ctrl+R`                | Resume conversation   |
-| `Ctrl+D`                | Delete conversation   |
-| `q` / `Esc`             | Return to list        |
+| Key                     | Action                                              |
+| ----------------------- | --------------------------------------------------- |
+| `j` / `↓`               | Scroll down                                         |
+| `k` / `↑`               | Scroll up                                           |
+| `d`                     | Half page down                                      |
+| `u`                     | Half page up                                        |
+| `Page Down`             | Full page down                                      |
+| `Page Up`               | Full page up                                        |
+| `g` / `Home`            | Jump to top                                         |
+| `G` / `End`             | Jump to bottom                                      |
+| `/`                     | Start search                                        |
+| `n`                     | Next search match                                   |
+| `N`                     | Previous search match                               |
+| `t`                     | Toggle tool calls                                   |
+| `T`                     | Toggle thinking                                     |
+| `p`                     | Show file path                                      |
+| `Ctrl+R`                | Resume conversation                                 |
+| `Ctrl+D`                | Delete conversation                                 |
+| `q` / `Esc`             | Return to list (or quit in direct file input mode) |
 
 ### Search
 
@@ -94,6 +94,23 @@ Search uses fuzzy word matching with the following features:
 - **Multi-word AND logic**: all query words must match
 
 Results are ranked by recency, so recent conversations appear first.
+
+### Direct file input
+
+You can open a JSONL conversation file directly, bypassing the conversation
+selection UI:
+
+```sh
+$ claude-history /path/to/conversation.jsonl
+```
+
+All display options work in this mode:
+
+```sh
+$ claude-history --show-tools --show-thinking /path/to/conversation.jsonl
+```
+
+Press `q` or `Esc` to quit when viewing a file directly.
 
 ### Conversation viewer
 
@@ -113,7 +130,10 @@ Press `q` or `Esc` to return to the conversation list.
 ```
 View Claude conversation history
 
-Usage: claude-history [OPTIONS]
+Usage: claude-history [OPTIONS] [FILE]
+
+Arguments:
+  [FILE]  JSONL conversation file to view directly
 
 Options:
   -t, --show-tools       Show tool calls in the conversation output

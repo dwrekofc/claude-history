@@ -137,4 +137,12 @@ pub struct Args {
     /// Disable colored output (for --render)
     #[arg(long, help = "Disable colored output")]
     pub no_color: bool,
+
+    /// Input JSONL file to view directly (skips conversation selection)
+    #[arg(
+        value_name = "FILE",
+        help = "JSONL conversation file to view directly",
+        conflicts_with_all = ["global", "show_dir", "resume", "show_path", "plain", "render"]
+    )]
+    pub input_file: Option<PathBuf>,
 }
