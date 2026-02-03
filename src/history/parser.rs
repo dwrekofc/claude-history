@@ -50,6 +50,7 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
     let mut extracted_cwd: Option<PathBuf> = None;
     let mut message_count: usize = 0;
     let mut parse_errors: Vec<ParseError> = Vec::new();
+    let mut extracted_summary: Option<String> = None;
 
     for (line_idx, line) in lines.iter().enumerate() {
         if line.trim().is_empty() {
@@ -104,6 +105,12 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
                                 message_count += 1;
                                 preview_parts.push(text);
                             }
+                        }
+                    }
+                    LogEntry::Summary { summary } => {
+                        // Extract summary from the first summary entry
+                        if extracted_summary.is_none() {
+                            extracted_summary = Some(summary.clone());
                         }
                     }
                     _ => {}
@@ -183,8 +190,11 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
             .join(" ... ")
     };
 
-    // Create full text for searching (all messages)
-    let full_text = all_parts.join(" ");
+    // Create full text for searching (all messages + summary)
+    let mut full_text = all_parts.join(" ");
+    if let Some(ref summary) = extracted_summary {
+        full_text = format!("{} {}", summary, full_text);
+    }
 
     // Normalize whitespace
     let preview = normalize_whitespace(&preview);
@@ -201,6 +211,7 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
         cwd: extracted_cwd,
         message_count,
         parse_errors,
+        summary: extracted_summary,
     }))
 }
 
@@ -605,5 +616,68 @@ mod tests {
             "<local-command-stdout></local-command-stdout>".to_string(),
             "Hello world".to_string(),
         ]));
+    }
+
+    // === Summary extraction ===
+
+    #[test]
+    fn extracts_summary_from_jsonl() {
+        let content = [
+            r#"{"type": "summary", "summary": "Test conversation summary", "leafUuid": "abc123"}"#
+                .to_string(),
+            user_msg("Hello", None),
+            assistant_msg("Hi there"),
+        ]
+        .join("\n");
+
+        let conv = parse_jsonl(&content).unwrap().unwrap();
+        assert_eq!(
+            conv.summary,
+            Some("Test conversation summary".to_string()),
+            "Should extract summary from summary entry"
+        );
+    }
+
+    #[test]
+    fn summary_included_in_full_text() {
+        let content = [
+            r#"{"type": "summary", "summary": "Important topic discussion", "leafUuid": "abc123"}"#
+                .to_string(),
+            user_msg("Hello", None),
+            assistant_msg("Hi there"),
+        ]
+        .join("\n");
+
+        let conv = parse_jsonl(&content).unwrap().unwrap();
+        assert!(
+            conv.full_text.contains("Important topic discussion"),
+            "Summary should be included in full_text for searching"
+        );
+    }
+
+    #[test]
+    fn handles_conversation_without_summary() {
+        let content = [user_msg("Hello", None), assistant_msg("Hi there")].join("\n");
+
+        let conv = parse_jsonl(&content).unwrap().unwrap();
+        assert!(conv.summary.is_none(), "Should have no summary");
+    }
+
+    #[test]
+    fn takes_first_summary_if_multiple() {
+        let content = [
+            r#"{"type": "summary", "summary": "First summary", "leafUuid": "abc"}"#.to_string(),
+            user_msg("Hello", None),
+            r#"{"type": "summary", "summary": "Second summary", "leafUuid": "def"}"#.to_string(),
+            assistant_msg("Hi there"),
+        ]
+        .join("\n");
+
+        let conv = parse_jsonl(&content).unwrap().unwrap();
+        assert_eq!(
+            conv.summary,
+            Some("First summary".to_string()),
+            "Should keep first summary encountered"
+        );
     }
 }

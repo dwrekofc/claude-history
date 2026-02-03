@@ -5,7 +5,6 @@ use serde::Deserialize;
 #[serde(rename_all = "lowercase")]
 pub enum LogEntry {
     Summary {
-        #[allow(dead_code)]
         summary: String,
     },
     User {

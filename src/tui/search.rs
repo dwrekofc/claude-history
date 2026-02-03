@@ -164,6 +164,7 @@ mod tests {
             cwd: None,
             message_count: 1,
             parse_errors: vec![],
+            summary: None,
         }
     }
 

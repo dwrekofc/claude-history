@@ -88,11 +88,19 @@ fn render_view_mode(frame: &mut Frame, app: &App, state: &ViewState) {
         1
     };
 
-    // Layout: header (2 lines) | content | status bar
+    // Check if conversation has summary for header height
+    let conv = app
+        .conversations()
+        .iter()
+        .find(|c| c.path == state.conversation_path);
+    let has_summary = conv.is_some_and(|c| c.summary.is_some());
+    let header_height = if has_summary { 3 } else { 2 };
+
+    // Layout: header (2-3 lines) | content | status bar
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),             // Header
+            Constraint::Length(header_height), // Header
             Constraint::Min(1),                // Content
             Constraint::Length(status_height), // Status bar (+ search input if typing)
         ])
@@ -123,7 +131,7 @@ fn render_view_header(frame: &mut Frame, app: &App, state: &ViewState, area: Rec
         .iter()
         .find(|c| c.path == state.conversation_path);
 
-    let (project, msg_count, timestamp) = if let Some(conv) = conv {
+    let (project, msg_count, timestamp, summary) = if let Some(conv) = conv {
         let project = conv.project_name.as_deref().unwrap_or("Unknown");
         let msg_count = if conv.message_count == 1 {
             "1 message".to_string()
@@ -131,7 +139,12 @@ fn render_view_header(frame: &mut Frame, app: &App, state: &ViewState, area: Rec
             format!("{} messages", conv.message_count)
         };
         let timestamp = conv.timestamp.format("%Y-%m-%d %H:%M").to_string();
-        (project.to_string(), msg_count, timestamp)
+        (
+            project.to_string(),
+            msg_count,
+            timestamp,
+            conv.summary.clone(),
+        )
     } else {
         // Fallback if parsing failed
         let project = state
@@ -140,10 +153,11 @@ fn render_view_header(frame: &mut Frame, app: &App, state: &ViewState, area: Rec
             .and_then(|s| s.to_str())
             .unwrap_or("Unknown")
             .to_string();
-        (project, "".to_string(), "".to_string())
+        (project, "".to_string(), "".to_string(), None)
     };
 
-    let header_line = Line::from(vec![
+    // Build header lines
+    let mut lines = vec![Line::from(vec![
         Span::raw("  "),
         Span::styled(
             format!("[{}]", project),
@@ -153,9 +167,20 @@ fn render_view_header(frame: &mut Frame, app: &App, state: &ViewState, area: Rec
         Span::styled(msg_count, Style::default().fg(Color::Rgb(140, 140, 140))),
         Span::raw(" · "),
         Span::styled(timestamp, Style::default().fg(Color::Rgb(140, 140, 140))),
-    ]);
+    ])];
 
-    let header = Paragraph::new(header_line).block(
+    // Add summary line if available
+    if let Some(ref summary_text) = summary {
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                summary_text.clone(),
+                Style::default().fg(Color::Rgb(180, 180, 180)),
+            ),
+        ]));
+    }
+
+    let header = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::BOTTOM)
             .border_style(Style::default().fg(Color::Rgb(60, 60, 60))),
@@ -531,24 +556,60 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Rgb(60, 60, 60))
             };
 
-            // Build left part: indicator + project
+            // Build left part: indicator + project + optional summary
             let project_part = conv
                 .project_name
                 .as_ref()
                 .map(|name| name.to_string())
                 .unwrap_or_default();
 
-            // Calculate padding for right-aligned timestamp + message count
-            let left_len = indicator.chars().count() + project_part.chars().count();
+            // Calculate right-side length first to determine available space for summary
             let right_len = msg_count.chars().count() + 3 + timestamp.chars().count(); // 3 for " · "
+            let indicator_len = indicator.chars().count();
+            let project_len = project_part.chars().count();
+            let min_padding = 2; // Minimum padding between content and timestamp
+
+            // Calculate available width for summary (filter empty summaries)
+            let available_for_summary =
+                width.saturating_sub(indicator_len + project_len + right_len + min_padding + 4); // 4 for " · " prefix and ellipsis
+
+            // Build summary part (dimmer, dynamically truncated based on available space)
+            let summary_part = conv
+                .summary
+                .as_ref()
+                .filter(|s| !s.is_empty() && available_for_summary > 5)
+                .map(|s| {
+                    let summary_chars = s.chars().count();
+                    if summary_chars > available_for_summary {
+                        format!(
+                            " · {}…",
+                            s.chars()
+                                .take(available_for_summary.saturating_sub(1))
+                                .collect::<String>()
+                        )
+                    } else {
+                        format!(" · {}", s)
+                    }
+                });
+
+            // Calculate padding for right-aligned timestamp + message count
+            let left_len = indicator_len
+                + project_len
+                + summary_part
+                    .as_ref()
+                    .map(|s| s.chars().count())
+                    .unwrap_or(0);
             let padding = width.saturating_sub(left_len + right_len + 1);
 
-            // Header line: ▌ project-name                    timestamp
+            // Header line: ▌ project-name · summary                    timestamp
             let project_style = if is_selected {
                 Style::default().fg(Color::White).bold()
             } else {
                 Style::default().fg(Color::White)
             };
+
+            let summary_style = Style::default().fg(Color::Rgb(100, 100, 100));
+            let summary_highlight_style = Style::default().fg(Color::Rgb(60, 160, 140)); // Dimmer cyan for summary
 
             // Highlight style: cyan with bold for selected row
             let highlight_style = if is_selected {
@@ -571,6 +632,17 @@ fn render_list(frame: &mut Frame, app: &App, area: Rect) {
                 project_style,
                 highlight_style,
             ));
+
+            // Add summary if present (with search highlighting)
+            if let Some(ref summary) = summary_part {
+                header_spans.extend(highlight_text(
+                    summary,
+                    &query_words,
+                    summary_style,
+                    summary_highlight_style,
+                ));
+            }
+
             header_spans.push(Span::raw(" ".repeat(padding)));
             header_spans.push(Span::styled(
                 msg_count,

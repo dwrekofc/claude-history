@@ -52,6 +52,8 @@ pub struct Conversation {
     pub message_count: usize,
     /// Parse errors encountered while processing this conversation file
     pub parse_errors: Vec<ParseError>,
+    /// Summary/title of the conversation (from type=summary JSONL entry)
+    pub summary: Option<String>,
 }
 
 pub struct Project {
