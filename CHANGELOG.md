@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.19 (2026-02-04)
+
+- Added syntax highlighting for code blocks in conversation output
+- Improved tool call display with human-readable formatting instead of raw JSON
+- Added Vim-style half-page navigation (Ctrl-D/Ctrl-U) in the viewer
+- Added Ctrl-W to delete word before cursor in the search field
+- Show conversation summary in the viewer header and search results
+- Display subagent conversations in ledger view
+- Added direct JSONL file input support (pass a file path as argument)
+- Added `--render` flag for debugging ledger output
+- Improved header layout: combined into single line when terminal width allows
+- Tool/thinking toggle settings now persist within session
+
 ## v0.1.18 (2026-02-02)
 
 - Added in-TUI conversation viewer. Press Enter to view conversations without
