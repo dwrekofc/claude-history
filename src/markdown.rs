@@ -29,6 +29,8 @@ struct MarkdownRenderer {
     style_stack: Vec<TextStyle>,
     list_stack: Vec<ListContext>,
     in_code_block: bool,
+    code_block_lang: String,
+    code_block_content: String,
     pending_text: String,
     at_line_start: bool,
     in_list_item_start: bool, // Suppress paragraph newline right after list bullet
@@ -74,6 +76,8 @@ impl MarkdownRenderer {
             style_stack: vec![],
             list_stack: vec![],
             in_code_block: false,
+            code_block_lang: String::new(),
+            code_block_content: String::new(),
             pending_text: String::new(),
             at_line_start: true,
             in_list_item_start: false,
@@ -127,6 +131,7 @@ impl MarkdownRenderer {
             Tag::CodeBlock(kind) => {
                 self.flush_pending();
                 self.in_code_block = true;
+                self.code_block_content.clear();
                 // Add blank line before code block for visual separation
                 if !self.output.is_empty() && !self.output.ends_with("\n\n") {
                     if !self.output.ends_with('\n') {
@@ -138,6 +143,7 @@ impl MarkdownRenderer {
                     CodeBlockKind::Fenced(lang) => lang.to_string(),
                     CodeBlockKind::Indented => String::new(),
                 };
+                self.code_block_lang = lang.clone();
                 if !lang.is_empty() {
                     self.output
                         .push_str(&format!("```{}", lang).dimmed().to_string());
@@ -236,6 +242,22 @@ impl MarkdownRenderer {
             }
             TagEnd::CodeBlock => {
                 self.in_code_block = false;
+
+                // Output highlighted code
+                let code = std::mem::take(&mut self.code_block_content);
+                if let Some(highlighted) =
+                    crate::syntax::highlight_code_ansi(&code, &self.code_block_lang)
+                {
+                    self.output.push_str(&highlighted);
+                } else {
+                    // Fallback: apply uniform style per line for unknown languages
+                    for line in code.lines() {
+                        self.output.push_str(&line.on_bright_black().to_string());
+                        self.output.push('\n');
+                    }
+                }
+
+                // Ensure proper line ending before closing fence
                 if !self.output.ends_with('\n') {
                     self.output.push('\n');
                 }
@@ -296,18 +318,8 @@ impl MarkdownRenderer {
         }
 
         if self.in_code_block {
-            // Code blocks: preserve formatting, apply code style per line
-            for line in text.lines() {
-                self.output.push_str(&line.on_bright_black().to_string());
-                self.output.push('\n');
-            }
-            // Handle case where text doesn't end with newline
-            if !text.ends_with('\n') && !text.is_empty() {
-                // Remove the extra newline we added
-                if self.output.ends_with('\n') {
-                    self.output.pop();
-                }
-            }
+            // Buffer code block content for syntax highlighting at block end
+            self.code_block_content.push_str(text);
         } else {
             // Apply styles immediately (before they get popped from stack)
             let styled = apply_styles(text, &self.style_stack);
@@ -546,8 +558,18 @@ mod tests {
     #[test]
     fn test_code_block() {
         let result = render_markdown("```rust\nlet x = 1;\n```", 80);
-        assert!(result.contains("let x = 1;"));
+        // With syntax highlighting, tokens are split with ANSI codes
+        // Check individual tokens are present
+        assert!(result.contains("let"));
+        assert!(result.contains("x"));
+        assert!(result.contains("1"));
         assert!(result.contains("```"));
+        // Verify syntax highlighting is applied (ANSI color codes present)
+        assert!(
+            result.contains("\x1b[38;2;"),
+            "Expected syntax highlighting ANSI codes in: {:?}",
+            result
+        );
     }
 
     #[test]

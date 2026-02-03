@@ -8,6 +8,7 @@ mod error;
 mod history;
 mod markdown;
 mod pager;
+mod syntax;
 mod tool_format;
 mod tui;
 

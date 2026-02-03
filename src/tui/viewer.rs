@@ -244,6 +244,7 @@ struct TuiMarkdownRenderer {
     list_stack: Vec<ListContext>,
     in_code_block: bool,
     code_block_content: String,
+    code_block_lang: String,
     in_list_item_start: bool, // Suppress paragraph blank line right after list bullet
 }
 
@@ -274,6 +275,7 @@ impl TuiMarkdownRenderer {
             list_stack: Vec::new(),
             in_code_block: false,
             code_block_content: String::new(),
+            code_block_lang: String::new(),
             in_list_item_start: false,
         }
     }
@@ -314,6 +316,7 @@ impl TuiMarkdownRenderer {
                     CodeBlockKind::Fenced(lang) => lang.to_string(),
                     CodeBlockKind::Indented => String::new(),
                 };
+                self.code_block_lang = lang.clone();
                 let fence = if lang.is_empty() {
                     "```".to_string()
                 } else {
@@ -404,19 +407,41 @@ impl TuiMarkdownRenderer {
             }
             TagEnd::CodeBlock => {
                 self.in_code_block = false;
-                // Take ownership of code block content to avoid borrow issues
                 let code_content = std::mem::take(&mut self.code_block_content);
-                // Output code block content
-                for code_line in code_content.lines() {
-                    self.push_styled_text(
-                        code_line,
-                        LineStyle {
-                            fg: Some(CODE_COLOR),
-                            ..Default::default()
-                        },
-                    );
-                    self.flush_line();
+
+                // Try syntax highlighting first
+                if let Some(highlighted_lines) =
+                    crate::syntax::highlight_code_tui(&code_content, &self.code_block_lang)
+                {
+                    for line_tokens in highlighted_lines {
+                        for token in line_tokens {
+                            let style = LineStyle {
+                                fg: Some(token.fg),
+                                bold: token.bold,
+                                italic: token.italic,
+                                dimmed: false,
+                            };
+                            // Strip trailing newline from token text
+                            let text = token.text.trim_end_matches('\n');
+                            self.push_styled_text(text, style);
+                        }
+                        self.flush_line();
+                    }
+                } else {
+                    // Fallback: uniform color for unknown languages
+                    for code_line in code_content.lines() {
+                        self.push_styled_text(
+                            code_line,
+                            LineStyle {
+                                fg: Some(CODE_COLOR),
+                                ..Default::default()
+                            },
+                        );
+                        self.flush_line();
+                    }
                 }
+
+                // Closing fence
                 self.push_styled_text(
                     "```",
                     LineStyle {
