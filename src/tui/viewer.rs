@@ -72,6 +72,8 @@ fn render_user_message(
     message: &crate::claude::UserMessage,
     options: &RenderOptions,
 ) {
+    let mut printed = false;
+
     // Extract text from user message, collecting all text blocks
     let text = match &message.content {
         UserContent::String(s) => process_command_message(s),
@@ -97,7 +99,53 @@ fn render_user_message(
     if let Some(text) = text {
         let md_lines = render_markdown_to_lines(&text, options.content_width);
         render_ledger_block_styled(lines, "You", WHITE, true, md_lines);
+        printed = true;
+    }
+
+    // Tool results (if enabled)
+    if options.show_tools
+        && let UserContent::Blocks(blocks) = &message.content {
+            for block in blocks {
+                if let ContentBlock::ToolResult { content, .. } = block {
+                    render_ledger_block_plain(lines, "Tool", DIM_TEAL, false, "<Result>");
+                    let content_str = format_tool_result_content(content.as_ref());
+                    render_continuation(lines, &content_str);
+                    printed = true;
+                }
+            }
+        }
+
+    if printed {
         lines.push(RenderedLine { spans: vec![] }); // Empty line after message
+    }
+}
+
+/// Format tool result content to a string for display
+fn format_tool_result_content(content: Option<&serde_json::Value>) -> String {
+    match content {
+        Some(value) => {
+            if let Some(s) = value.as_str() {
+                s.to_string()
+            } else if let Some(arr) = value.as_array() {
+                // Handle array of content blocks (e.g., [{type: "text", text: "..."}])
+                let texts: Vec<&str> = arr
+                    .iter()
+                    .filter_map(|item| item.get("text").and_then(|t| t.as_str()))
+                    .collect();
+                if !texts.is_empty() {
+                    texts.join("\n\n")
+                } else if let Ok(formatted) = serde_json::to_string_pretty(value) {
+                    formatted
+                } else {
+                    "<invalid content>".to_string()
+                }
+            } else if let Ok(formatted) = serde_json::to_string_pretty(value) {
+                formatted
+            } else {
+                "<invalid content>".to_string()
+            }
+        }
+        None => "<no content>".to_string(),
     }
 }
 
