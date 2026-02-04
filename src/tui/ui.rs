@@ -11,6 +11,9 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragr
 /// Lines per conversation item (header + preview + separator)
 const LINES_PER_ITEM: usize = 3;
 
+/// Duration before status messages auto-clear
+const STATUS_TTL: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Render the TUI
 pub fn render(frame: &mut Frame, app: &App) {
     match app.app_mode() {
@@ -31,40 +34,39 @@ fn render_list_mode(frame: &mut Frame, app: &App) {
     let inner_area = outer_block.inner(area);
     frame.render_widget(outer_block, area);
 
-    // Check if we need space for status message or confirmation dialog
-    let has_status = app
-        .status_message()
-        .is_some_and(|(_, instant)| instant.elapsed() < std::time::Duration::from_secs(3));
-
-    let (list_area, bottom_area) = if *app.dialog_mode() == DialogMode::ConfirmDelete || has_status
-    {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Min(1),
-                Constraint::Length(1),
-            ])
-            .split(inner_area);
-        render_search_bar(frame, app, chunks[0]);
-        (chunks[1], Some(chunks[2]))
-    } else {
+    // Graceful degradation for tiny terminals - skip bottom bar if too small
+    if inner_area.height < 4 {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(2), Constraint::Min(1)])
             .split(inner_area);
         render_search_bar(frame, app, chunks[0]);
-        (chunks[1], None)
-    };
+        render_list(frame, app, chunks[1]);
+        return;
+    }
 
-    render_list(frame, app, list_area);
+    // Always reserve space for bottom bar (status, dialog, or hotkeys)
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner_area);
 
-    if let Some(area) = bottom_area {
-        if *app.dialog_mode() == DialogMode::ConfirmDelete {
-            render_confirm_dialog(frame, area);
-        } else if let Some((msg, _)) = app.status_message() {
-            render_status_message(frame, msg, area);
-        }
+    render_search_bar(frame, app, chunks[0]);
+    render_list(frame, app, chunks[1]);
+
+    // Render bottom bar: confirm dialog > status message > hotkeys
+    if *app.dialog_mode() == DialogMode::ConfirmDelete {
+        render_confirm_dialog(frame, chunks[2]);
+    } else if let Some((msg, instant)) = app.status_message()
+        && instant.elapsed() < STATUS_TTL
+    {
+        render_status_message(frame, msg, chunks[2]);
+    } else {
+        render_list_status_bar(frame, app, chunks[2]);
     }
 
     // Render help overlay on top of everything if active
@@ -79,6 +81,40 @@ fn render_status_message(frame: &mut Frame, msg: &str, area: Rect) {
         Span::styled(msg, Style::default().fg(Color::Yellow)),
     ]);
     let status = Paragraph::new(status_line);
+    frame.render_widget(status, area);
+}
+
+fn render_list_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let is_loading = app.is_loading();
+
+    let key_style = Style::default().fg(Color::Rgb(78, 201, 176));
+    let label_style = Style::default().fg(Color::Rgb(100, 100, 100));
+    // Dimmed styles for unavailable shortcuts during loading
+    let dim_key_style = Style::default().fg(Color::Rgb(60, 60, 60));
+    let dim_label_style = Style::default().fg(Color::Rgb(60, 60, 60));
+
+    let (action_key, action_label) = if is_loading {
+        (dim_key_style, dim_label_style)
+    } else {
+        (key_style, label_style)
+    };
+
+    let spans = vec![
+        Span::raw("  "),
+        Span::styled("Enter", action_key),
+        Span::styled(" open  ", action_label),
+        Span::styled("^R", action_key),
+        Span::styled(" resume  ", action_label),
+        Span::styled("^X", action_key),
+        Span::styled(" delete  ", action_label),
+        Span::styled("?", key_style),
+        Span::styled("help  ", label_style),
+        Span::styled("Esc", key_style),
+        Span::styled(" quit", label_style),
+    ];
+
+    let status_line = Line::from(spans);
+    let status = Paragraph::new(status_line).style(Style::default().bg(Color::Rgb(30, 30, 35)));
     frame.render_widget(status, area);
 }
 
