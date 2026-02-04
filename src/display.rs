@@ -198,7 +198,7 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
     }
 
     fn format_tool_call(&mut self, name: &str, input: &serde_json::Value) {
-        let formatted = tool_format::format_tool_call(name, input);
+        let formatted = tool_format::format_tool_call(name, input, self.content_width);
 
         // Print the header with appropriate styling
         let padded_name = format!("{:>width$}", "Claude", width = NAME_WIDTH);
@@ -249,7 +249,7 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
     }
 
     fn format_agent_tool_call(&mut self, agent_id: &str, name: &str, input: &serde_json::Value) {
-        let formatted = tool_format::format_tool_call(name, input);
+        let formatted = tool_format::format_tool_call(name, input, self.content_width);
         let label = format!("↳{}", short_agent_id(agent_id));
 
         // Print the header with appropriate styling (dimmed for subagents)
@@ -284,6 +284,9 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
 /// Plain text formatter without formatting or alignment
 struct PlainFormatter;
 
+/// Default content width for plain text output
+const PLAIN_CONTENT_WIDTH: usize = 80;
+
 impl OutputFormatter for PlainFormatter {
     fn format_user_text(&mut self, text: &str) {
         println!("You: {}", text);
@@ -294,7 +297,7 @@ impl OutputFormatter for PlainFormatter {
     }
 
     fn format_tool_call(&mut self, name: &str, input: &serde_json::Value) {
-        let formatted = tool_format::format_tool_call(name, input);
+        let formatted = tool_format::format_tool_call(name, input, PLAIN_CONTENT_WIDTH);
         println!("Claude: {}", formatted.header);
         if let Some(body) = formatted.body {
             for line in body.lines() {
@@ -326,7 +329,7 @@ impl OutputFormatter for PlainFormatter {
     }
 
     fn format_agent_tool_call(&mut self, agent_id: &str, name: &str, input: &serde_json::Value) {
-        let formatted = tool_format::format_tool_call(name, input);
+        let formatted = tool_format::format_tool_call(name, input, PLAIN_CONTENT_WIDTH);
         println!(
             "  [{}] Agent: {}",
             short_agent_id(agent_id),

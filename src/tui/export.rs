@@ -398,9 +398,13 @@ fn markdown_code_fence(content: &str) -> String {
     format!("{}\n{}\n{}", fence, content, fence)
 }
 
+/// Default width for export (no wrapping needed for markdown export)
+const EXPORT_WIDTH: usize = usize::MAX;
+
 /// Format a tool call for export
 fn format_tool_call_for_export(name: &str, input: &serde_json::Value) -> String {
-    let formatted = tool_format::format_tool_call(name, input);
+    // Use large width to avoid wrapping in export (full command on one line is better for copying)
+    let formatted = tool_format::format_tool_call(name, input, EXPORT_WIDTH);
     match formatted.body {
         Some(body) => format!("{}\n{}", formatted.header, body),
         None => formatted.header,

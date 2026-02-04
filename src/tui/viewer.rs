@@ -191,7 +191,15 @@ fn render_assistant_message(
     if options.show_tools {
         for block in &message.content {
             if let ContentBlock::ToolUse { name, input, .. } = block {
-                render_tool_call(lines, name, input, "Claude", DIM_TEAL, false);
+                render_tool_call(
+                    lines,
+                    name,
+                    input,
+                    "Claude",
+                    DIM_TEAL,
+                    false,
+                    options.content_width,
+                );
                 printed = true;
             }
         }
@@ -685,8 +693,9 @@ fn render_tool_call(
     label: &str,
     label_color: (u8, u8, u8),
     dimmed: bool,
+    content_width: usize,
 ) {
-    let formatted = tool_format::format_tool_call(name, input);
+    let formatted = tool_format::format_tool_call(name, input, content_width);
 
     let mut spans = Vec::new();
 
@@ -915,7 +924,15 @@ fn render_agent_message(
                 for block in blocks {
                     if let ContentBlock::ToolUse { name, input, .. } = block {
                         let label = format!("↳{}", short_id);
-                        render_tool_call(lines, name, input, &label, DIM_TEAL, true);
+                        render_tool_call(
+                            lines,
+                            name,
+                            input,
+                            &label,
+                            DIM_TEAL,
+                            true,
+                            options.content_width,
+                        );
                         printed = true;
                     }
                 }

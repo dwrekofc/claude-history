@@ -14,10 +14,12 @@ pub struct FormattedToolCall {
 }
 
 /// Format a tool call for display
-pub fn format_tool_call(name: &str, input: &Value) -> FormattedToolCall {
+///
+/// The `max_width` parameter controls line wrapping for tools with long content (e.g., Bash commands).
+pub fn format_tool_call(name: &str, input: &Value, max_width: usize) -> FormattedToolCall {
     match name {
         "Task" => format_task(input),
-        "Bash" => format_bash(input),
+        "Bash" => format_bash(input, max_width),
         "Read" => format_read(input),
         "Grep" => format_grep(input),
         "Glob" => format_glob(input),
@@ -46,12 +48,42 @@ fn format_task(input: &Value) -> FormattedToolCall {
     }
 }
 
-fn format_bash(input: &Value) -> FormattedToolCall {
+fn format_bash(input: &Value, max_width: usize) -> FormattedToolCall {
     let command = input.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    let prefix = "Bash: ";
+    let prefix_len = prefix.len();
+
+    // Available width for command text (accounting for prefix on first line)
+    let available_width = max_width.saturating_sub(prefix_len);
+
+    // No wrapping if width is too small or command fits
+    if available_width == 0 || command.chars().count() <= available_width {
+        return FormattedToolCall {
+            header: format!("{}{}", prefix, command),
+            body: None,
+        };
+    }
+
+    // Wrap the command text
+    let wrapped: Vec<_> = textwrap::wrap(command, available_width)
+        .into_iter()
+        .map(|cow| cow.into_owned())
+        .collect();
+
+    if wrapped.len() <= 1 {
+        return FormattedToolCall {
+            header: format!("{}{}", prefix, command),
+            body: None,
+        };
+    }
+
+    // First line goes in header, rest in body
+    let header = format!("{}{}", prefix, wrapped[0]);
+    let body = wrapped[1..].join("\n");
 
     FormattedToolCall {
-        header: format!("Bash: {}", command),
-        body: None,
+        header,
+        body: Some(body),
     }
 }
 
@@ -186,7 +218,7 @@ mod tests {
             "description": "Find the bug",
             "prompt": "Look for issues in the code"
         });
-        let result = format_tool_call("Task", &input);
+        let result = format_tool_call("Task", &input, 80);
         assert_eq!(result.header, "Task (Explore): Find the bug");
         assert_eq!(result.body, Some("Look for issues in the code".to_string()));
     }
@@ -197,8 +229,33 @@ mod tests {
             "command": "git status",
             "description": "Check repo status"
         });
-        let result = format_tool_call("Bash", &input);
+        let result = format_tool_call("Bash", &input, 80);
         assert_eq!(result.header, "Bash: git status");
+        assert_eq!(result.body, None);
+    }
+
+    #[test]
+    fn test_format_bash_wrapping() {
+        let long_command = "cargo build --release --features 'feature1 feature2 feature3' --target x86_64-unknown-linux-gnu";
+        let input = json!({
+            "command": long_command
+        });
+        // With width 40, command should wrap (available width is 40 - 6 = 34 for command text)
+        let result = format_tool_call("Bash", &input, 40);
+        assert!(result.header.starts_with("Bash: cargo"));
+        assert!(
+            result.body.is_some(),
+            "Long command should have body for continuation"
+        );
+    }
+
+    #[test]
+    fn test_format_bash_no_wrap_when_fits() {
+        let input = json!({
+            "command": "ls -la"
+        });
+        let result = format_tool_call("Bash", &input, 80);
+        assert_eq!(result.header, "Bash: ls -la");
         assert_eq!(result.body, None);
     }
 
@@ -209,7 +266,7 @@ mod tests {
             "offset": 100,
             "limit": 50
         });
-        let result = format_tool_call("Read", &input);
+        let result = format_tool_call("Read", &input, 80);
         assert_eq!(result.header, "Read: /src/main.rs:100-150");
     }
 
@@ -220,7 +277,7 @@ mod tests {
             "path": "src",
             "glob": "*.rs"
         });
-        let result = format_tool_call("Grep", &input);
+        let result = format_tool_call("Grep", &input, 80);
         assert_eq!(result.header, "Grep: \"fn main\" in src/*.rs");
     }
 
@@ -231,7 +288,7 @@ mod tests {
             "old_string": "old code",
             "new_string": "new code"
         });
-        let result = format_tool_call("Edit", &input);
+        let result = format_tool_call("Edit", &input, 80);
         assert_eq!(result.header, "Edit: /src/lib.rs");
         assert_eq!(result.body, Some("- old code\n+ new code".to_string()));
     }
