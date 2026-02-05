@@ -834,5 +834,4 @@ mod tests {
         assert!(conv.model.is_none(), "Should have no model");
         assert_eq!(conv.total_tokens, 0, "Should have zero tokens");
     }
-
 }
