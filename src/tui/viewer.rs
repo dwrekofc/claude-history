@@ -1208,6 +1208,12 @@ fn render_continuation_dimmed(lines: &mut Vec<RenderedLine>, text: &str) {
 fn process_command_message(text: &str) -> Option<String> {
     let trimmed = text.trim();
 
+    // Check for local-command-caveat - skip these system messages entirely
+    if trimmed.starts_with("<local-command-caveat>") && trimmed.ends_with("</local-command-caveat>")
+    {
+        return None;
+    }
+
     // Check for empty or whitespace-only local-command-stdout - skip these entirely
     if trimmed.starts_with("<local-command-stdout>") && trimmed.ends_with("</local-command-stdout>")
     {
@@ -1228,6 +1234,11 @@ fn process_command_message(text: &str) -> Option<String> {
         let content_start = start + "<command-name>".len();
         if content_start < end {
             let command_name = &trimmed[content_start..end];
+
+            // Skip /clear commands - internal context-clearing, not meaningful to display
+            if command_name == "/clear" {
+                return None;
+            }
 
             // Also extract command args if present
             if let Some(args_start) = trimmed.find("<command-args>")

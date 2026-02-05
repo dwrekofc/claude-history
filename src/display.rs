@@ -399,6 +399,11 @@ fn process_command_message(text: &str) -> Option<String> {
         if content_start < end {
             let command_name = &trimmed[content_start..end];
 
+            // Skip /clear commands - internal context-clearing, not meaningful to display
+            if command_name == "/clear" {
+                return None;
+            }
+
             // Also extract command args if present
             if let Some(args_start) = trimmed.find("<command-args>")
                 && let Some(args_end) = trimmed.find("</command-args>")
@@ -894,10 +899,25 @@ mod tests {
     }
 
     #[test]
-    fn process_command_message_extracts_command_name() {
+    fn process_command_message_skips_clear_command() {
         assert_eq!(
             process_command_message("<command-name>/clear</command-name>"),
-            Some("/clear".to_string())
+            None
+        );
+        // Also skip clear with command-message and command-args tags
+        assert_eq!(
+            process_command_message(
+                "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn process_command_message_extracts_other_command_names() {
+        assert_eq!(
+            process_command_message("<command-name>/help</command-name>"),
+            Some("/help".to_string())
         );
     }
 }
