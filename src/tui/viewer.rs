@@ -990,7 +990,13 @@ fn render_agent_message(
                 let combined = texts.join("\n\n");
                 let md_lines = render_markdown_to_lines(&combined, options.content_width);
                 let name = format!("↳{}", short_id);
-                render_ledger_block_styled_dimmed(lines, &name, WHITE, md_lines);
+                render_ledger_block_styled_dimmed(
+                    lines,
+                    &name,
+                    WHITE,
+                    md_lines,
+                    options.show_timing,
+                );
                 printed = true;
             }
 
@@ -998,9 +1004,15 @@ fn render_agent_message(
             if options.show_tools {
                 for block in blocks {
                     if let ContentBlock::ToolResult { content, .. } = block {
-                        render_ledger_block_plain_dimmed(lines, "  ↳ Tool", DIM_TEAL, "<Result>");
+                        render_ledger_block_plain_dimmed(
+                            lines,
+                            "  ↳ Tool",
+                            DIM_TEAL,
+                            "<Result>",
+                            options.show_timing,
+                        );
                         let content_str = format_tool_result_content(content.as_ref());
-                        render_continuation_dimmed(lines, &content_str);
+                        render_continuation_dimmed(lines, &content_str, options.show_timing);
                         printed = true;
                     }
                 }
@@ -1025,7 +1037,13 @@ fn render_agent_message(
                 let combined = texts.join("\n\n");
                 let md_lines = render_markdown_to_lines(&combined, options.content_width);
                 let name = format!("↳{}", short_id);
-                render_ledger_block_styled_dimmed(lines, &name, TEAL, md_lines);
+                render_ledger_block_styled_dimmed(
+                    lines,
+                    &name,
+                    TEAL,
+                    md_lines,
+                    options.show_timing,
+                );
                 printed = true;
             }
 
@@ -1063,9 +1081,14 @@ fn render_ledger_block_styled_dimmed(
     name: &str,
     color: (u8, u8, u8),
     styled_lines: Vec<StyledLine>,
+    show_timing: bool,
 ) {
     for (i, styled_line) in styled_lines.iter().enumerate() {
         let mut spans = Vec::new();
+
+        if show_timing {
+            spans.push((" ".repeat(TIMESTAMP_WIDTH), LineStyle::default()));
+        }
 
         let name_text = if i == 0 {
             format!("{:>width$}", name, width = NAME_WIDTH)
@@ -1101,25 +1124,27 @@ fn render_ledger_block_styled_dimmed(
     }
 
     if styled_lines.is_empty() {
-        let spans = vec![
-            (
-                format!("{:>width$}", name, width = NAME_WIDTH),
-                LineStyle {
-                    fg: Some(color),
-                    bold: false,
-                    dimmed: true,
-                    italic: false,
-                },
-            ),
-            (
-                " │ ".to_string(),
-                LineStyle {
-                    fg: Some(SEPARATOR_COLOR),
-                    dimmed: true,
-                    ..Default::default()
-                },
-            ),
-        ];
+        let mut spans = Vec::new();
+        if show_timing {
+            spans.push((" ".repeat(TIMESTAMP_WIDTH), LineStyle::default()));
+        }
+        spans.push((
+            format!("{:>width$}", name, width = NAME_WIDTH),
+            LineStyle {
+                fg: Some(color),
+                bold: false,
+                dimmed: true,
+                italic: false,
+            },
+        ));
+        spans.push((
+            " │ ".to_string(),
+            LineStyle {
+                fg: Some(SEPARATOR_COLOR),
+                dimmed: true,
+                ..Default::default()
+            },
+        ));
         lines.push(RenderedLine { spans });
     }
 }
@@ -1130,9 +1155,14 @@ fn render_ledger_block_plain_dimmed(
     name: &str,
     color: (u8, u8, u8),
     text: &str,
+    show_timing: bool,
 ) {
     for (i, line_text) in text.lines().enumerate() {
         let mut spans = Vec::new();
+
+        if show_timing {
+            spans.push((" ".repeat(TIMESTAMP_WIDTH), LineStyle::default()));
+        }
 
         let name_text = if i == 0 {
             format!("{:>width$}", name, width = NAME_WIDTH)
@@ -1172,32 +1202,36 @@ fn render_ledger_block_plain_dimmed(
 }
 
 /// Render continuation lines (dimmed for subagents)
-fn render_continuation_dimmed(lines: &mut Vec<RenderedLine>, text: &str) {
+fn render_continuation_dimmed(lines: &mut Vec<RenderedLine>, text: &str, show_timing: bool) {
     for line_text in text.lines() {
-        let spans = vec![
-            (
-                " ".repeat(NAME_WIDTH),
-                LineStyle {
-                    dimmed: true,
-                    ..Default::default()
-                },
-            ),
-            (
-                " │ ".to_string(),
-                LineStyle {
-                    fg: Some(SEPARATOR_COLOR),
-                    dimmed: true,
-                    ..Default::default()
-                },
-            ),
-            (
-                line_text.to_string(),
-                LineStyle {
-                    dimmed: true,
-                    ..Default::default()
-                },
-            ),
-        ];
+        let mut spans = Vec::new();
+
+        if show_timing {
+            spans.push((" ".repeat(TIMESTAMP_WIDTH), LineStyle::default()));
+        }
+
+        spans.push((
+            " ".repeat(NAME_WIDTH),
+            LineStyle {
+                dimmed: true,
+                ..Default::default()
+            },
+        ));
+        spans.push((
+            " │ ".to_string(),
+            LineStyle {
+                fg: Some(SEPARATOR_COLOR),
+                dimmed: true,
+                ..Default::default()
+            },
+        ));
+        spans.push((
+            line_text.to_string(),
+            LineStyle {
+                dimmed: true,
+                ..Default::default()
+            },
+        ));
 
         lines.push(RenderedLine { spans });
     }
