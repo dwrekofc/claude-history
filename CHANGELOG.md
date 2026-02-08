@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.23 (2026-02-08)
+
+- Fixed blank or empty message blocks occasionally appearing in conversation
+  output
+
 ## v0.1.22 (2026-02-07)
 
 - Added multi-word search support in the viewer — search for phrases like "add
