@@ -659,6 +659,9 @@ fn process_assistant_message<F: OutputFormatter>(
 
     // Print text blocks
     for text in formatted.text_blocks {
+        if text.trim().is_empty() {
+            continue;
+        }
         formatter.format_assistant_text(text);
         printed_content = true;
     }

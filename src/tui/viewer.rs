@@ -227,6 +227,9 @@ fn render_assistant_message(
     // Text blocks
     for block in &message.content {
         if let ContentBlock::Text { text } = block {
+            if text.trim().is_empty() {
+                continue;
+            }
             let md_lines = render_markdown_to_lines(text, options.content_width);
             render_ledger_block_styled(lines, "Claude", TEAL, true, md_lines, ts_remaining);
             printed = true;
