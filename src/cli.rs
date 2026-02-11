@@ -96,6 +96,10 @@ pub struct Args {
     #[arg(long, short = 'p', help = "Print the selected conversation file path")]
     pub show_path: bool,
 
+    /// Print the selected conversation's session ID and exit
+    #[arg(long, short = 'i', help = "Print the selected conversation session ID")]
+    pub show_id: bool,
+
     /// Output in plain text format without ledger formatting (for piping to other tools)
     #[arg(long, help = "Output plain text without ledger formatting")]
     pub plain: bool,
@@ -142,7 +146,7 @@ pub struct Args {
     #[arg(
         value_name = "FILE",
         help = "JSONL conversation file to view directly",
-        conflicts_with_all = ["global", "show_dir", "resume", "show_path", "plain", "render"]
+        conflicts_with_all = ["global", "show_dir", "resume", "show_path", "show_id", "plain", "render"]
     )]
     pub input_file: Option<PathBuf>,
 }

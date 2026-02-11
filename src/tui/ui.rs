@@ -895,6 +895,7 @@ fn render_help_overlay(frame: &mut Frame, is_view_mode: bool, is_single_file_mod
             ("y", "Copy to clipboard"),
             ("p", "Show file path"),
             ("Y", "Copy path"),
+            ("I", "Copy session ID"),
             ("Ctrl+R", "Resume"),
             ("Ctrl+X", "Delete"),
             ("q / Esc", exit_text),

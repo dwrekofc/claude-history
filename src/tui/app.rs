@@ -891,6 +891,29 @@ impl App {
                 None
             }
 
+            // Copy session ID to clipboard
+            KeyCode::Char('I') => {
+                if let AppMode::View(ref state) = self.app_mode
+                    && let Some(id) = state.conversation_path.file_stem().and_then(|s| s.to_str())
+                {
+                    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(id)) {
+                        Ok(()) => {
+                            self.status_message = Some((
+                                "Session ID copied to clipboard".to_string(),
+                                std::time::Instant::now(),
+                            ));
+                        }
+                        Err(e) => {
+                            self.status_message = Some((
+                                format!("Clipboard error: {}", e),
+                                std::time::Instant::now(),
+                            ));
+                        }
+                    }
+                }
+                None
+            }
+
             // Open export menu (save to file)
             KeyCode::Char('e') => {
                 self.dialog_mode = DialogMode::ExportMenu { selected: 0 };

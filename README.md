@@ -82,6 +82,8 @@ preview.
 | `t`            | Cycle tools: off/truncated/full                    |
 | `T`            | Toggle thinking                                    |
 | `p`            | Show file path                                     |
+| `Y`            | Copy file path to clipboard                        |
+| `I`            | Copy session ID to clipboard                       |
 | `Ctrl+R`       | Resume conversation                                |
 | `Ctrl+X`       | Delete conversation                                |
 | `?`            | Show keyboard shortcuts                            |
@@ -152,6 +154,7 @@ Options:
       --hide-thinking    Hide thinking blocks from the conversation output
   -c, --resume           Resume the selected conversation in Claude Code
   -p, --show-path        Print the selected conversation file path
+  -i, --show-id          Print the selected conversation session ID
       --plain            Output plain text without ledger formatting
       --debug [<LEVEL>]  Print debug information (filter by level: debug, info, warn, error)
   -g, --global           Search all conversations from all projects at once
@@ -206,6 +209,15 @@ claude --resume <conversation-id> --dangerously-skip-permissions
 This provides a cleaner alternative to shell aliases, as the arguments are
 applied specifically when resuming through `claude-history`, without affecting
 how you normally invoke Claude.
+
+If you use a shell alias for `claude` with extra flags, you can use `--show-id`
+to select a session and resume it manually:
+
+```sh
+claude --resume $(claude-history --show-id)
+```
+
+In the viewer, press `I` to copy the session ID to clipboard.
 
 ### Markdown rendering
 

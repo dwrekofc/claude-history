@@ -207,6 +207,19 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    if args.show_id {
+        let conversation_id = selected_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| {
+                AppError::ClaudeExecutionError(
+                    "Conversation filename is not valid Unicode".to_string(),
+                )
+            })?;
+        println!("{}", conversation_id);
+        return Ok(());
+    }
+
     if args.resume {
         // Find the selected conversation to get its project_path
         let conv = conversations.iter().find(|c| c.path == selected_path);
