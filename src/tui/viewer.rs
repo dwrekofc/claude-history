@@ -30,9 +30,48 @@ const TOOL_TEXT: (u8, u8, u8) = (140, 145, 150);
 const DIFF_ADD: (u8, u8, u8) = (120, 200, 120);
 const DIFF_REMOVE: (u8, u8, u8) = (220, 120, 120);
 
+/// Maximum body lines shown in truncated tool call mode
+const TRUNCATED_BODY_LINES: usize = 3;
+/// Maximum result lines shown in truncated tool result mode
+const TRUNCATED_RESULT_LINES: usize = 4;
+
+/// Controls how tool calls and results are displayed
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToolDisplayMode {
+    Hidden,
+    #[default]
+    Truncated,
+    Full,
+}
+
+impl ToolDisplayMode {
+    /// Cycle to the next mode: Hidden → Truncated → Full → Hidden
+    pub fn next(self) -> Self {
+        match self {
+            Self::Hidden => Self::Truncated,
+            Self::Truncated => Self::Full,
+            Self::Full => Self::Hidden,
+        }
+    }
+
+    /// Whether tools should be rendered at all
+    pub fn is_visible(self) -> bool {
+        !matches!(self, Self::Hidden)
+    }
+
+    /// Fixed-width label for the status bar (3 chars each)
+    pub fn status_label(self) -> &'static str {
+        match self {
+            Self::Hidden => "off",
+            Self::Truncated => "trn",
+            Self::Full => "all",
+        }
+    }
+}
+
 /// Options for rendering a conversation
 pub struct RenderOptions {
-    pub show_tools: bool,
+    pub tool_display: ToolDisplayMode,
     pub show_thinking: bool,
     pub show_timing: bool,
     pub content_width: usize,
@@ -150,7 +189,7 @@ fn render_user_message(
     }
 
     // Tool results (if enabled)
-    if options.show_tools
+    if options.tool_display.is_visible()
         && let UserContent::Blocks(blocks) = &message.content
     {
         for block in blocks {
@@ -169,7 +208,13 @@ fn render_user_message(
                 } else {
                     None
                 };
-                render_tool_result(lines, &content_str, options.content_width, ts);
+                render_tool_result(
+                    lines,
+                    &content_str,
+                    options.content_width,
+                    ts,
+                    options.tool_display,
+                );
                 printed = true;
             }
         }
@@ -242,7 +287,7 @@ fn render_assistant_message(
     }
 
     // Tool calls (if enabled)
-    if options.show_tools {
+    if options.tool_display.is_visible() {
         for block in &message.content {
             if let ContentBlock::ToolUse { name, input, .. } = block {
                 // Pass timestamp to first tool call if no text block consumed it
@@ -264,6 +309,7 @@ fn render_assistant_message(
                     false,
                     options.content_width,
                     ts,
+                    options.tool_display,
                 );
                 printed = true;
             }
@@ -921,7 +967,41 @@ fn render_ledger_block_styled(
     }
 }
 
+/// Render a truncation indicator line like "(N more lines...)"
+fn render_truncation_indicator(
+    lines: &mut Vec<RenderedLine>,
+    remaining: usize,
+    dimmed: bool,
+    show_timing: bool,
+) {
+    let mut spans = Vec::new();
+
+    if show_timing {
+        spans.push((" ".repeat(TIMESTAMP_WIDTH), LineStyle::default()));
+    }
+
+    spans.push((" ".repeat(NAME_WIDTH), LineStyle::default()));
+    spans.push((
+        " │ ".to_string(),
+        LineStyle {
+            fg: Some(SEPARATOR_COLOR),
+            dimmed,
+            ..Default::default()
+        },
+    ));
+    spans.push((
+        format!("({} more lines...)", remaining),
+        LineStyle {
+            dimmed: true,
+            ..Default::default()
+        },
+    ));
+
+    lines.push(RenderedLine { spans });
+}
+
 /// Render a formatted tool call with proper styling
+#[allow(clippy::too_many_arguments)]
 fn render_tool_call(
     lines: &mut Vec<RenderedLine>,
     name: &str,
@@ -931,6 +1011,7 @@ fn render_tool_call(
     dimmed: bool,
     content_width: usize,
     timestamp: Option<&str>,
+    tool_display: ToolDisplayMode,
 ) {
     let formatted = tool_format::format_tool_call(name, input, content_width);
 
@@ -984,9 +1065,11 @@ fn render_tool_call(
 
     // Render the body if present, with empty line separator
     if let Some(body) = formatted.body {
+        let show_timing = timestamp.is_some();
+
         // Empty line between header and body
         let mut empty_spans = Vec::new();
-        if timestamp.is_some() {
+        if show_timing {
             empty_spans.push((" ".repeat(TIMESTAMP_WIDTH), LineStyle::default()));
         }
         empty_spans.push((" ".repeat(NAME_WIDTH), LineStyle::default()));
@@ -999,7 +1082,25 @@ fn render_tool_call(
             },
         ));
         lines.push(RenderedLine { spans: empty_spans });
-        render_tool_body(lines, &body, dimmed, timestamp.is_some());
+
+        if tool_display == ToolDisplayMode::Truncated {
+            let body_lines: Vec<&str> = body.lines().collect();
+            let total = body_lines.len();
+            if total > TRUNCATED_BODY_LINES {
+                let truncated = body_lines[..TRUNCATED_BODY_LINES].join("\n");
+                render_tool_body(lines, &truncated, dimmed, show_timing);
+                render_truncation_indicator(
+                    lines,
+                    total - TRUNCATED_BODY_LINES,
+                    dimmed,
+                    show_timing,
+                );
+            } else {
+                render_tool_body(lines, &body, dimmed, show_timing);
+            }
+        } else {
+            render_tool_body(lines, &body, dimmed, show_timing);
+        }
     }
 }
 
@@ -1065,11 +1166,19 @@ fn render_tool_result(
     text: &str,
     content_width: usize,
     timestamp: Option<&str>,
+    tool_display: ToolDisplayMode,
 ) {
     // Render markdown
     let styled_lines = render_markdown_to_lines(text, content_width);
 
-    for (i, styled_line) in styled_lines.iter().enumerate() {
+    let total = styled_lines.len();
+    let limit = if tool_display == ToolDisplayMode::Truncated && total > TRUNCATED_RESULT_LINES {
+        TRUNCATED_RESULT_LINES
+    } else {
+        total
+    };
+
+    for (i, styled_line) in styled_lines.iter().take(limit).enumerate() {
         let mut spans = Vec::new();
 
         // Timestamp prefix (only on first line if provided)
@@ -1118,6 +1227,10 @@ fn render_tool_result(
         }
 
         lines.push(RenderedLine { spans });
+    }
+
+    if limit < total {
+        render_truncation_indicator(lines, total - limit, false, timestamp.is_some());
     }
 }
 
@@ -1170,7 +1283,7 @@ fn render_agent_message(
             }
 
             // Tool results
-            if options.show_tools {
+            if options.tool_display.is_visible() {
                 for block in blocks {
                     if let ContentBlock::ToolResult { content, .. } = block {
                         render_ledger_block_plain_dimmed(
@@ -1181,7 +1294,28 @@ fn render_agent_message(
                             options.show_timing,
                         );
                         let content_str = format_tool_result_content(content.as_ref());
-                        render_continuation_dimmed(lines, &content_str, options.show_timing);
+                        if options.tool_display == ToolDisplayMode::Truncated {
+                            let content_lines: Vec<&str> = content_str.lines().collect();
+                            let total = content_lines.len();
+                            if total > TRUNCATED_RESULT_LINES {
+                                let truncated = content_lines[..TRUNCATED_RESULT_LINES].join("\n");
+                                render_continuation_dimmed(lines, &truncated, options.show_timing);
+                                render_truncation_indicator(
+                                    lines,
+                                    total - TRUNCATED_RESULT_LINES,
+                                    true,
+                                    options.show_timing,
+                                );
+                            } else {
+                                render_continuation_dimmed(
+                                    lines,
+                                    &content_str,
+                                    options.show_timing,
+                                );
+                            }
+                        } else {
+                            render_continuation_dimmed(lines, &content_str, options.show_timing);
+                        }
                         printed = true;
                     }
                 }
@@ -1217,7 +1351,7 @@ fn render_agent_message(
             }
 
             // Tool calls
-            if options.show_tools {
+            if options.tool_display.is_visible() {
                 let align_ts = if options.show_timing {
                     Some("     ")
                 } else {
@@ -1235,6 +1369,7 @@ fn render_agent_message(
                             true,
                             options.content_width,
                             align_ts,
+                            options.tool_display,
                         );
                         printed = true;
                     }

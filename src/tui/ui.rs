@@ -523,8 +523,8 @@ fn render_view_status_bar(frame: &mut Frame, app: &App, state: &ViewState, area:
     let key_style = Style::default().fg(Color::Rgb(78, 201, 176));
     let label_style = Style::default().fg(Color::Rgb(100, 100, 100));
 
-    // Fixed-width "on "/"off" to prevent jumping when toggling
-    let tools_status = if state.show_tools { "on " } else { "off" };
+    // Fixed-width status labels to prevent jumping when toggling
+    let tools_status = state.tool_display.status_label();
     let thinking_status = if state.show_thinking { "on " } else { "off" };
     let timing_status = if state.show_timing { "on " } else { "off" };
 
@@ -888,7 +888,7 @@ fn render_help_overlay(frame: &mut Frame, is_view_mode: bool, is_single_file_mod
             ("G / End", "Jump to bottom"),
             ("/", "Search"),
             ("n / N", "Next / prev match"),
-            ("t", "Toggle tool calls"),
+            ("t", "Cycle tools: off/trunc/full"),
             ("T", "Toggle thinking"),
             ("i", "Toggle timing"),
             ("e", "Export to file"),

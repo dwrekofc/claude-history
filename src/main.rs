@@ -70,6 +70,19 @@ fn run() -> Result<()> {
         display_config.no_tools.map(|b| !b),
         false, // Default: hide tools
     );
+    // Map CLI flag to ToolDisplayMode
+    // --show-tools → Full, --no-tools → Hidden, default → Truncated
+    let tool_display = if args.show_tools {
+        tui::ToolDisplayMode::Full
+    } else if args.no_tools {
+        tui::ToolDisplayMode::Hidden
+    } else {
+        match display_config.no_tools {
+            Some(true) => tui::ToolDisplayMode::Hidden,
+            Some(false) => tui::ToolDisplayMode::Full,
+            None => tui::ToolDisplayMode::Truncated,
+        }
+    };
     let show_last = resolve_bool_setting(args.last, args.first, display_config.last, false);
     let use_relative_time = resolve_bool_setting(
         args.relative_time,
@@ -120,7 +133,7 @@ fn run() -> Result<()> {
         tui::run_single_file(
             input_file.clone(),
             use_relative_time,
-            show_tools,
+            tool_display,
             show_thinking,
         )?;
         return Ok(());
@@ -131,7 +144,7 @@ fn run() -> Result<()> {
         // Global Search (-g) - use streaming loader for instant startup
         let rx = history::load_all_conversations_streaming(show_last, args.debug);
 
-        match tui::run_with_loader(rx, use_relative_time, show_tools, show_thinking)? {
+        match tui::run_with_loader(rx, use_relative_time, tool_display, show_thinking)? {
             (tui::Action::Select(path), convs) => (convs, path),
             (tui::Action::Resume(path), convs) => {
                 let conv = convs.iter().find(|c| c.path == path);
@@ -174,7 +187,7 @@ fn run() -> Result<()> {
         match tui::run(
             conversations.clone(),
             use_relative_time,
-            show_tools,
+            tool_display,
             show_thinking,
         )? {
             tui::Action::Select(path) => (conversations, path),

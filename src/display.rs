@@ -790,7 +790,11 @@ pub fn render_to_terminal(file_path: &Path, options: &DisplayOptions) -> Result<
     let content_width = terminal_width.saturating_sub(NAME_WIDTH + SEPARATOR_WIDTH);
 
     let render_options = RenderOptions {
-        show_tools: !options.no_tools,
+        tool_display: if options.no_tools {
+            crate::tui::ToolDisplayMode::Hidden
+        } else {
+            crate::tui::ToolDisplayMode::Full
+        },
         show_thinking: options.show_thinking,
         show_timing: false, // Non-TUI render doesn't support timing toggle
         content_width,

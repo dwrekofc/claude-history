@@ -5,6 +5,7 @@ use crate::history::{
 };
 use crate::tui::search::{self, SearchableConversation};
 use crate::tui::ui;
+use crate::tui::viewer::ToolDisplayMode;
 use chrono::Local;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
@@ -65,8 +66,8 @@ pub struct ViewState {
     pub rendered_lines: Vec<RenderedLine>,
     /// Total content height in lines
     pub total_lines: usize,
-    /// Whether to show tool calls
-    pub show_tools: bool,
+    /// Tool display mode (hidden/truncated/full)
+    pub tool_display: ToolDisplayMode,
     /// Whether to show thinking blocks
     pub show_thinking: bool,
     /// Whether to show timing information (timestamps + durations)
@@ -144,8 +145,8 @@ pub struct App {
     app_mode: AppMode,
     /// Status message with timestamp for auto-clear
     status_message: Option<(String, std::time::Instant)>,
-    /// Persistent view setting: whether to show tool calls
-    show_tools: bool,
+    /// Persistent view setting: tool display mode
+    tool_display: ToolDisplayMode,
     /// Persistent view setting: whether to show thinking blocks
     show_thinking: bool,
     /// Persistent view setting: whether to show timing information
@@ -159,7 +160,7 @@ impl App {
     pub fn new(
         conversations: Vec<Conversation>,
         use_relative_time: bool,
-        show_tools: bool,
+        tool_display: ToolDisplayMode,
         show_thinking: bool,
     ) -> Self {
         let searchable = search::precompute_search_text(&conversations);
@@ -179,7 +180,7 @@ impl App {
             dialog_mode: DialogMode::None,
             app_mode: AppMode::List,
             status_message: None,
-            show_tools,
+            tool_display,
             show_thinking,
             show_timing: false,
             single_file_mode: false,
@@ -187,7 +188,11 @@ impl App {
     }
 
     /// Create a new app in loading state
-    pub fn new_loading(use_relative_time: bool, show_tools: bool, show_thinking: bool) -> Self {
+    pub fn new_loading(
+        use_relative_time: bool,
+        tool_display: ToolDisplayMode,
+        show_thinking: bool,
+    ) -> Self {
         Self {
             conversations: Vec::new(),
             searchable: Vec::new(),
@@ -201,7 +206,7 @@ impl App {
             dialog_mode: DialogMode::None,
             app_mode: AppMode::List,
             status_message: None,
-            show_tools,
+            tool_display,
             show_thinking,
             show_timing: false,
             single_file_mode: false,
@@ -212,7 +217,7 @@ impl App {
     pub fn new_single_file(
         path: PathBuf,
         use_relative_time: bool,
-        show_tools: bool,
+        tool_display: ToolDisplayMode,
         show_thinking: bool,
     ) -> Self {
         // Parse using the same parser as the main list
@@ -248,7 +253,7 @@ impl App {
                 scroll_offset: 0,
                 rendered_lines: Vec::new(),
                 total_lines: 0,
-                show_tools,
+                tool_display,
                 show_thinking,
                 show_timing: false,
                 content_width: 0,
@@ -258,7 +263,7 @@ impl App {
                 current_match: 0,
             }),
             status_message: None,
-            show_tools,
+            tool_display,
             show_thinking,
             show_timing: false,
             single_file_mode: true,
@@ -663,7 +668,7 @@ impl App {
             AppMode::View(state) => (
                 state.conversation_path.clone(),
                 crate::tui::export::ExportOptions {
-                    show_tools: state.show_tools,
+                    show_tools: state.tool_display.is_visible(),
                     show_thinking: state.show_thinking,
                 },
             ),
@@ -1219,7 +1224,7 @@ impl App {
         let path = self.conversations[conv_idx].path.clone();
 
         let options = RenderOptions {
-            show_tools: self.show_tools,
+            tool_display: self.tool_display,
             show_thinking: self.show_thinking,
             show_timing: self.show_timing,
             content_width,
@@ -1233,7 +1238,7 @@ impl App {
                     scroll_offset: 0,
                     rendered_lines,
                     total_lines,
-                    show_tools: self.show_tools,
+                    tool_display: self.tool_display,
                     show_thinking: self.show_thinking,
                     show_timing: self.show_timing,
                     content_width,
@@ -1327,11 +1332,11 @@ impl App {
         }
     }
 
-    /// Toggle tools visibility in view mode
+    /// Cycle tool display mode in view mode
     fn toggle_view_tools(&mut self, viewport_height: usize) {
         if let AppMode::View(ref mut state) = self.app_mode {
-            state.show_tools = !state.show_tools;
-            self.show_tools = state.show_tools; // Persist at app level
+            state.tool_display = state.tool_display.next();
+            self.tool_display = state.tool_display; // Persist at app level
             self.re_render_view(viewport_height);
         }
     }
@@ -1360,7 +1365,7 @@ impl App {
 
         if let AppMode::View(ref mut state) = self.app_mode {
             let options = RenderOptions {
-                show_tools: state.show_tools,
+                tool_display: state.tool_display,
                 show_thinking: state.show_thinking,
                 show_timing: state.show_timing,
                 content_width: state.content_width,
@@ -1459,7 +1464,7 @@ const NAME_WIDTH: usize = 9;
 pub fn run(
     conversations: Vec<Conversation>,
     use_relative_time: bool,
-    show_tools: bool,
+    tool_display: ToolDisplayMode,
     show_thinking: bool,
 ) -> Result<Action> {
     // Set up panic hook to restore terminal
@@ -1471,7 +1476,12 @@ pub fn run(
     }));
 
     let mut guard = TerminalGuard::new()?;
-    let mut app = App::new(conversations, use_relative_time, show_tools, show_thinking);
+    let mut app = App::new(
+        conversations,
+        use_relative_time,
+        tool_display,
+        show_thinking,
+    );
 
     loop {
         let frame_area = guard.terminal.get_frame().area();
@@ -1540,7 +1550,7 @@ pub fn run(
 pub fn run_with_loader(
     rx: Receiver<LoaderMessage>,
     use_relative_time: bool,
-    show_tools: bool,
+    tool_display: ToolDisplayMode,
     show_thinking: bool,
 ) -> Result<(Action, Vec<Conversation>)> {
     // Set up panic hook to restore terminal
@@ -1552,7 +1562,7 @@ pub fn run_with_loader(
     }));
 
     let mut guard = TerminalGuard::new()?;
-    let mut app = App::new_loading(use_relative_time, show_tools, show_thinking);
+    let mut app = App::new_loading(use_relative_time, tool_display, show_thinking);
 
     loop {
         // Process all pending loader messages (non-blocking)
@@ -1651,7 +1661,7 @@ pub fn run_with_loader(
 pub fn run_single_file(
     path: PathBuf,
     use_relative_time: bool,
-    show_tools: bool,
+    tool_display: ToolDisplayMode,
     show_thinking: bool,
 ) -> Result<()> {
     // Set up panic hook to restore terminal
@@ -1663,7 +1673,7 @@ pub fn run_single_file(
     }));
 
     let mut guard = TerminalGuard::new()?;
-    let mut app = App::new_single_file(path, use_relative_time, show_tools, show_thinking);
+    let mut app = App::new_single_file(path, use_relative_time, tool_display, show_thinking);
 
     loop {
         let frame_area = guard.terminal.get_frame().area();

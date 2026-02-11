@@ -79,7 +79,7 @@ preview.
 | `/`            | Start search                                       |
 | `n`            | Next search match                                  |
 | `N`            | Previous search match                              |
-| `t`            | Toggle tool calls                                  |
+| `t`            | Cycle tools: off/truncated/full                    |
 | `T`            | Toggle thinking                                    |
 | `p`            | Show file path                                     |
 | `Ctrl+R`       | Resume conversation                                |
@@ -126,7 +126,7 @@ conversations in a ledger-style format with scrolling support.
 - **Scrolling**: Navigate with vim-style keys (`j`/`k`) or arrow keys
 - **Search**: Press `/` to search within the conversation, then `n`/`N` to
   navigate matches
-- **Toggle tools**: Press `t` to show/hide tool calls
+- **Cycle tools**: Press `t` to cycle tool display (off → truncated → full)
 - **Toggle thinking**: Press `T` to show/hide thinking blocks
 - **Show path**: Press `p` to display the conversation file path
 
@@ -169,9 +169,10 @@ Options:
 
 ### Showing tool calls
 
-By default, tool invocations (`<Calling Tool: …>`) are hidden to keep the
-conversation focused on the human dialogue. Use `--show-tools` (or `-t`) to
-display them when you want to see what tools Claude used.
+In the TUI viewer, tool calls default to **truncated** mode — showing the tool
+header plus the first few body lines with a "(N more lines...)" indicator. Press
+`t` to cycle through modes: off → truncated → full. Use `--show-tools` (or `-t`)
+to start in full mode, or `--no-tools` to start with tools hidden.
 
 ### Showing thinking blocks
 
@@ -304,8 +305,8 @@ Create the config file:
 mkdir -p ~/.config/claude-history
 cat > ~/.config/claude-history/config.toml << 'EOF'
 [display]
-# Show tool calls in output (default: false)
-no_tools = false
+# Tool display: true = hidden, false = full (default: unset = truncated)
+# no_tools = false
 
 # Show last messages in TUI preview (default: false)
 last = false
@@ -332,8 +333,8 @@ EOF
 
 #### Display options
 
-- `no_tools` (boolean): When false, shows tool calls; when true, hides them
-  (default: false means tools are hidden)
+- `no_tools` (boolean): When `true`, hides tool calls; when `false`, shows them
+  in full. When unset (default), tools display in truncated mode
 - `last` (boolean): Show last messages instead of first in TUI preview (default:
   false)
 - `relative_time` (boolean): Display relative time instead of absolute timestamp
