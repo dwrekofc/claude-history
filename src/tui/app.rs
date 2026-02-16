@@ -446,6 +446,14 @@ impl App {
         self.status_message.as_ref()
     }
 
+    /// Returns how long until the active status message expires, if any
+    pub fn status_message_remaining(&self) -> Option<Duration> {
+        const STATUS_TTL: Duration = Duration::from_secs(3);
+        self.status_message
+            .as_ref()
+            .and_then(|(_, instant)| STATUS_TTL.checked_sub(instant.elapsed()))
+    }
+
     pub fn cursor_pos(&self) -> usize {
         self.cursor_pos
     }
@@ -1606,8 +1614,17 @@ pub fn run_with_loader(
         // Render current state
         guard.terminal.draw(|frame| ui::render(frame, &app))?;
 
-        // Poll for keyboard input with timeout (allows us to check loader messages)
-        if event::poll(Duration::from_millis(50)).map_err(|e| AppError::Io(io::Error::other(e)))?
+        // Use short poll timeout while loading (to check for loader messages),
+        // otherwise block until input arrives (or until status message expires)
+        let poll_timeout = if app.is_loading() {
+            Duration::from_millis(50)
+        } else if let Some(remaining) = app.status_message_remaining() {
+            remaining
+        } else {
+            Duration::from_secs(3600)
+        };
+
+        if event::poll(poll_timeout).map_err(|e| AppError::Io(io::Error::other(e)))?
             && let Event::Key(key) = event::read().map_err(|e| AppError::Io(io::Error::other(e)))?
             && key.kind == KeyEventKind::Press
         {
