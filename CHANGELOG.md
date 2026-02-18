@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.26 (2026-02-18)
+
+- Added `global = true` config option to default to global search without
+  passing `-g` every time, with `--local` flag to override when needed
+- Ledger export and clipboard copy now render markdown properly (headings,
+  lists, code blocks, tables) and wrap long lines instead of overflowing
+- Fixed high idle CPU usage (~9% down to near zero) when the TUI was sitting
+  idle after loading
+- Fixed search preview highlighting partial word matches instead of the actual
+  search phrase
+- Fixed long lines in code blocks overflowing the terminal width
+- Fixed blank lines and indentation issues in ledger export
+
 ## v0.1.25 (2026-02-11)
 
 - Added `--show-id` (`-i`) flag to print the selected conversation's session ID,
