@@ -63,6 +63,23 @@ impl ToolDisplayMode {
     }
 }
 
+/// Information about a rendered message's position in the line buffer
+#[derive(Clone, Debug)]
+pub struct MessageBoundary {
+    /// First line index of this message (inclusive)
+    pub start_line: usize,
+    /// Last line index of this message (exclusive)
+    pub end_line: usize,
+    /// The JSONL line index (0-based) this message came from
+    pub entry_index: usize,
+}
+
+/// Result of rendering a conversation
+pub struct RenderResult {
+    pub lines: Vec<RenderedLine>,
+    pub message_boundaries: Vec<MessageBoundary>,
+}
+
 /// Options for rendering a conversation
 pub struct RenderOptions {
     pub tool_display: ToolDisplayMode,
@@ -84,28 +101,63 @@ fn format_timestamp(iso_timestamp: &str) -> Option<String> {
 pub fn render_conversation(
     file_path: &Path,
     options: &RenderOptions,
-) -> std::io::Result<Vec<RenderedLine>> {
+) -> std::io::Result<RenderResult> {
     let file = File::open(file_path)?;
     let reader = BufReader::new(file);
     let mut lines = Vec::new();
+    let mut message_boundaries = Vec::new();
 
-    for line_result in reader.lines() {
+    for (entry_index, line_result) in reader.lines().enumerate() {
         let line = line_result?;
         if line.trim().is_empty() {
             continue;
         }
 
         if let Ok(entry) = serde_json::from_str::<LogEntry>(&line) {
+            let start = lines.len();
             render_entry(&mut lines, &entry, options);
+            let end = lines.len();
+            if start != end {
+                message_boundaries.push(MessageBoundary {
+                    start_line: start,
+                    end_line: end,
+                    entry_index,
+                });
+            }
         }
     }
 
     // Collapse consecutive empty lines into single empty lines.
     // Multiple render functions each add trailing empty lines, which can
     // result in double blanks when a tool result has empty output.
-    lines.dedup_by(|a, b| a.spans.is_empty() && b.spans.is_empty());
+    let mut removed = 0;
+    let mut prev_empty = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let is_empty = lines[i].spans.is_empty();
+        if is_empty && prev_empty {
+            lines.remove(i);
+            // Adjust boundaries: shift end_line for boundaries that include this line,
+            // and shift start_line/end_line for boundaries after this line
+            for boundary in message_boundaries.iter_mut() {
+                if boundary.start_line > i + removed {
+                    boundary.start_line -= 1;
+                }
+                if boundary.end_line > i + removed {
+                    boundary.end_line -= 1;
+                }
+            }
+            removed += 1;
+        } else {
+            prev_empty = is_empty;
+            i += 1;
+        }
+    }
 
-    Ok(lines)
+    Ok(RenderResult {
+        lines,
+        message_boundaries,
+    })
 }
 
 fn render_entry(lines: &mut Vec<RenderedLine>, entry: &LogEntry, options: &RenderOptions) {

@@ -854,7 +854,8 @@ pub fn render_to_terminal(file_path: &Path, options: &DisplayOptions) -> Result<
         content_width,
     };
 
-    let rendered_lines = render_conversation(file_path, &render_options)?;
+    let render_result = render_conversation(file_path, &render_options)?;
+    let rendered_lines = render_result.lines;
 
     // Spawn pager if requested
     let mut pager_child = if options.use_pager {

@@ -11,6 +11,7 @@
 
 use crate::claude::{self, ContentBlock, LogEntry, UserContent, UserMessage};
 use crate::tool_format;
+use arboard::Clipboard;
 use chrono::Local;
 use std::fs::{self, File};
 #[cfg(target_os = "linux")]
@@ -184,6 +185,113 @@ pub fn export_to_clipboard(
         },
         Err(e) => ExportResult { message: e },
     }
+}
+
+/// Copy a single message from a conversation to clipboard
+pub fn yank_single_message(
+    source_path: &Path,
+    entry_index: usize,
+    options: ExportOptions,
+) -> ExportResult {
+    let content = match generate_single_entry_plain(source_path, entry_index, options) {
+        Ok(c) if c.is_empty() => {
+            return ExportResult {
+                message: "No text content in this message".to_string(),
+            };
+        }
+        Ok(c) => c,
+        Err(e) => {
+            return ExportResult {
+                message: format!("Failed to read: {}", e),
+            };
+        }
+    };
+
+    match Clipboard::new() {
+        Ok(mut clipboard) => match clipboard.set_text(&content) {
+            Ok(_) => ExportResult {
+                message: "Message copied to clipboard".to_string(),
+            },
+            Err(e) => ExportResult {
+                message: format!("Clipboard error: {}", e),
+            },
+        },
+        Err(e) => ExportResult {
+            message: format!("Clipboard unavailable: {}", e),
+        },
+    }
+}
+
+/// Generate plain text for a single JSONL entry
+fn generate_single_entry_plain(
+    path: &Path,
+    entry_index: usize,
+    options: ExportOptions,
+) -> std::io::Result<String> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let mut output = String::new();
+
+    for (i, line) in reader.lines().enumerate() {
+        let line = line?;
+        if i != entry_index {
+            continue;
+        }
+        if line.trim().is_empty() {
+            break;
+        }
+        if let Ok(entry) = serde_json::from_str::<LogEntry>(&line) {
+            match entry {
+                LogEntry::User { message, .. } => {
+                    if let Some(text) = extract_user_text(&message) {
+                        output.push_str(&text);
+                    }
+                    if options.show_tools
+                        && let UserContent::Blocks(blocks) = &message.content
+                    {
+                        for block in blocks {
+                            if let ContentBlock::ToolResult { content, .. } = block {
+                                let content_str = format_tool_result_for_export(content.as_ref());
+                                if !output.is_empty() {
+                                    output.push_str("\n\n");
+                                }
+                                output.push_str(&content_str);
+                            }
+                        }
+                    }
+                }
+                LogEntry::Assistant { message, .. } => {
+                    for block in &message.content {
+                        match block {
+                            ContentBlock::Text { text } => {
+                                if !output.is_empty() {
+                                    output.push_str("\n\n");
+                                }
+                                output.push_str(text);
+                            }
+                            ContentBlock::ToolUse { name, input, .. } if options.show_tools => {
+                                if !output.is_empty() {
+                                    output.push_str("\n\n");
+                                }
+                                output.push_str(&format_tool_call_for_export(name, input));
+                            }
+                            ContentBlock::Thinking { thinking, .. } if options.show_thinking => {
+                                if !output.is_empty() {
+                                    output.push_str("\n\n");
+                                }
+                                output.push_str(thinking);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        break;
+    }
+
+    Ok(output)
 }
 
 /// Generate content in the specified format
