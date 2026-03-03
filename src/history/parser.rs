@@ -77,7 +77,9 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
                         ..
                     } => {
                         // Track timestamps for conversation duration
-                        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&timestamp) {
+                        if let Some(ref ts_str) = timestamp
+                            && let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_str)
+                        {
                             if first_timestamp.is_none() {
                                 first_timestamp = Some(ts);
                             }
@@ -118,7 +120,9 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
                         message, timestamp, ..
                     } => {
                         // Track timestamps for conversation duration
-                        if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&timestamp) {
+                        if let Some(ref ts_str) = timestamp
+                            && let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_str)
+                        {
                             if first_timestamp.is_none() {
                                 first_timestamp = Some(ts);
                             }

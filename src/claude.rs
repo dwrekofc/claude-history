@@ -10,7 +10,8 @@ pub enum LogEntry {
     User {
         message: UserMessage,
         /// ISO 8601 timestamp when this message was sent
-        timestamp: String,
+        #[serde(default)]
+        timestamp: Option<String>,
         /// UUID for linking with turn_duration entries
         #[allow(dead_code)]
         uuid: Option<String>,
@@ -20,7 +21,8 @@ pub enum LogEntry {
     Assistant {
         message: AssistantMessage,
         /// ISO 8601 timestamp when this message was sent
-        timestamp: String,
+        #[serde(default)]
+        timestamp: Option<String>,
         /// UUID for linking with turn_duration entries
         #[allow(dead_code)]
         uuid: Option<String>,

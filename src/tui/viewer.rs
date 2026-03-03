@@ -132,7 +132,7 @@ fn render_entry(lines: &mut Vec<RenderedLine>, entry: &LogEntry, options: &Rende
             message, timestamp, ..
         } => {
             let ts = if options.show_timing {
-                format_timestamp(timestamp)
+                timestamp.as_deref().and_then(format_timestamp)
             } else {
                 None
             };
@@ -142,7 +142,7 @@ fn render_entry(lines: &mut Vec<RenderedLine>, entry: &LogEntry, options: &Rende
             message, timestamp, ..
         } => {
             let ts = if options.show_timing {
-                format_timestamp(timestamp)
+                timestamp.as_deref().and_then(format_timestamp)
             } else {
                 None
             };
