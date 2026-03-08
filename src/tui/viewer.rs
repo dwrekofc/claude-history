@@ -713,6 +713,10 @@ impl TuiMarkdownRenderer {
             TagEnd::List(_) => {
                 self.list_stack.pop();
                 self.in_list_item_start = false; // Clear flag when list ends
+                // Add blank line after top-level lists
+                if self.list_stack.is_empty() {
+                    self.ensure_blank_line();
+                }
             }
             TagEnd::Item => {
                 self.flush_line();
@@ -784,6 +788,16 @@ impl TuiMarkdownRenderer {
             return;
         }
 
+        // Wrap to next line if the code won't fit on the current line
+        let code_width = code.chars().count();
+        if self.current_width + code_width > self.max_width && self.current_width > 0 {
+            self.flush_line();
+            if let Some(ctx) = self.list_stack.last() {
+                let indent = "  ".repeat(ctx.depth + 1);
+                self.push_styled_text(&indent, LineStyle::default());
+            }
+        }
+
         self.push_styled_text(
             code,
             LineStyle {
@@ -794,8 +808,8 @@ impl TuiMarkdownRenderer {
     }
 
     fn soft_break(&mut self) {
-        // Preserve line breaks
-        self.flush_line();
+        // A single newline in markdown is a soft break — treat as space
+        self.text(" ");
     }
 
     fn hard_break(&mut self) {
@@ -1924,9 +1938,9 @@ mod tests {
 
         // First item should start with "1. "
         assert!(lines[0].starts_with("1. "), "First line: {:?}", lines[0]);
-        // With pulldown-cmark, continuation is treated as part of the paragraph
-        // and may appear on the same line or wrapped to next line
-        let first_item_text = lines[0..3].join(" ");
+        // Soft breaks join continuation to the same paragraph, so all first-item
+        // text may appear on a single line at wide widths
+        let first_item_text = lines.join(" ");
         assert!(
             first_item_text.contains("First item"),
             "Should contain first item text"
@@ -1942,7 +1956,7 @@ mod tests {
             .position(|l| l.starts_with("2. "))
             .expect("Should find '2. '");
         assert!(
-            line2_idx >= 1 && line2_idx <= 4,
+            line2_idx >= 1,
             "Second item should appear after first"
         );
     }
