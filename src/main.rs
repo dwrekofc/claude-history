@@ -329,6 +329,41 @@ fn resume_with_claude(
         }
     };
 
+    // Cross-project fork: if forking and CWD differs from conversation's project,
+    // copy the session files to CWD's project directory and resume there instead.
+    if fork_session {
+        let cwd = std::env::current_dir().map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Failed to get current directory: {}", e),
+            ))
+        })?;
+
+        let cwd_projects_dir = history::get_claude_projects_dir(&cwd)?;
+        let conv_projects_dir = selected_path.parent().ok_or_else(|| {
+            AppError::ClaudeExecutionError(
+                "Cannot determine conversation's project directory".to_string(),
+            )
+        })?;
+
+        if cwd_projects_dir != conv_projects_dir {
+            // Copy session to CWD's project
+            std::fs::create_dir_all(&cwd_projects_dir).map_err(AppError::Io)?;
+            copy_session_files(
+                selected_path,
+                &conversation_id,
+                conv_projects_dir,
+                &cwd_projects_dir,
+            )?;
+
+            let mut command = Command::new("claude");
+            command.args(["--resume", &conversation_id]);
+            command.args(default_args);
+            command.current_dir(&cwd);
+            return run_claude_command(command);
+        }
+    }
+
     let mut command = Command::new("claude");
     command.args(["--resume", &conversation_id]);
     if fork_session {
@@ -338,6 +373,50 @@ fn resume_with_claude(
     command.current_dir(project_dir);
 
     run_claude_command(command)
+}
+
+/// Copy session files from one project directory to another for cross-project forking.
+///
+/// Copies:
+/// 1. The .jsonl transcript file
+/// 2. The session subdirectory (tool-results/, subagents/) if it exists
+/// 3. The file-history directory for undo support if it exists
+fn copy_session_files(
+    jsonl_path: &Path,
+    session_id: &str,
+    source_projects_dir: &Path,
+    target_projects_dir: &Path,
+) -> Result<()> {
+    // 1. Copy the .jsonl file
+    let target_jsonl = target_projects_dir.join(jsonl_path.file_name().unwrap());
+    std::fs::copy(jsonl_path, &target_jsonl).map_err(AppError::Io)?;
+
+    // 2. Copy the session subdirectory (tool-results/, subagents/)
+    let session_dir = source_projects_dir.join(session_id);
+    if session_dir.is_dir() {
+        let target_session_dir = target_projects_dir.join(session_id);
+        copy_dir_recursive(&session_dir, &target_session_dir)?;
+    }
+
+    // Note: file-history (~/.claude/file-history/<uuid>/) is global, not per-project.
+    // Claude Code finds it by session ID, so no copy needed.
+
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst).map_err(AppError::Io)?;
+    for entry in std::fs::read_dir(src).map_err(AppError::Io)? {
+        let entry = entry.map_err(AppError::Io)?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(AppError::Io)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

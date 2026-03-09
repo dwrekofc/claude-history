@@ -199,6 +199,11 @@ To fork a conversation (creating a new session branching from the original),
 use `--resume --fork-session` or press `Ctrl+F` in the TUI. This passes
 `--fork-session` to the `claude` command.
 
+When forking from `--global` mode and the conversation belongs to a different
+project than your current working directory, the session files are copied to
+your CWD's project directory first, then resumed there — so the fork lives in
+your current project.
+
 You can configure default arguments to pass to the `claude` command every time
 you resume a conversation. This is useful if you typically run Claude with
 specific flags (like `--dangerously-skip-permissions`) and want them applied
