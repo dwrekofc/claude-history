@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.31 (2026-03-09)
+
+- Search now matches project names, so you can find sessions by the project they
+  belong to
+
 ## v0.1.30 (2026-03-09)
 
 - Preview panel now shows the last messages by default instead of the first, so
