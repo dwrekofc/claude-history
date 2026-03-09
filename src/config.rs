@@ -1,4 +1,5 @@
 use crate::error::{AppError, Result};
+use crossterm::event::{KeyCode, KeyModifiers};
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
@@ -12,6 +13,7 @@ pub struct ConfigFile {
     pub global: Option<bool>,
     pub display: Option<DisplayConfig>,
     pub resume: Option<ResumeConfig>,
+    pub keys: Option<KeysConfig>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -29,6 +31,136 @@ pub struct DisplayConfig {
 #[serde(deny_unknown_fields)]
 pub struct ResumeConfig {
     pub default_args: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+#[serde(deny_unknown_fields)]
+pub struct KeysConfig {
+    pub resume: Option<KeyBinding>,
+    pub fork: Option<KeyBinding>,
+    pub delete: Option<KeyBinding>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct KeyBinding {
+    pub code: KeyCode,
+    pub modifiers: KeyModifiers,
+}
+
+impl KeyBinding {
+    pub fn matches(&self, code: KeyCode, modifiers: KeyModifiers) -> bool {
+        self.code == code && self.modifiers == modifiers
+    }
+
+    /// Format for status bar display (e.g. "^F", "M-F")
+    pub fn short_label(&self) -> String {
+        let prefix = if self.modifiers.contains(KeyModifiers::CONTROL) {
+            "^"
+        } else if self.modifiers.contains(KeyModifiers::ALT) {
+            "M-"
+        } else {
+            ""
+        };
+        match self.code {
+            KeyCode::Char(c) => format!("{}{}", prefix, c.to_ascii_uppercase()),
+            _ => String::new(),
+        }
+    }
+
+    /// Format for help overlay (e.g. "Ctrl+F", "Alt+F")
+    pub fn help_label(&self) -> String {
+        let prefix = if self.modifiers.contains(KeyModifiers::CONTROL) {
+            "Ctrl+"
+        } else if self.modifiers.contains(KeyModifiers::ALT) {
+            "Alt+"
+        } else {
+            ""
+        };
+        match self.code {
+            KeyCode::Char(c) => format!("{}{}", prefix, c.to_ascii_uppercase()),
+            _ => String::new(),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for KeyBinding {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        parse_key_binding(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+fn parse_key_binding(s: &str) -> std::result::Result<KeyBinding, String> {
+    let parts: Vec<&str> = s.split('+').map(str::trim).collect();
+    match parts.as_slice() {
+        [modifier, key] => {
+            let modifiers = match modifier.to_lowercase().as_str() {
+                "ctrl" | "control" => KeyModifiers::CONTROL,
+                "alt" | "meta" => KeyModifiers::ALT,
+                _ => return Err(format!("Unknown modifier: {modifier}")),
+            };
+            let code = match key.to_lowercase().as_str() {
+                k if k.len() == 1 => KeyCode::Char(k.chars().next().unwrap()),
+                _ => return Err(format!("Unknown key: {key}")),
+            };
+            Ok(KeyBinding { code, modifiers })
+        }
+        [key] => {
+            let code = match key.to_lowercase().as_str() {
+                k if k.len() == 1 => KeyCode::Char(k.chars().next().unwrap()),
+                _ => return Err(format!("Unknown key: {key}")),
+            };
+            Ok(KeyBinding {
+                code,
+                modifiers: KeyModifiers::NONE,
+            })
+        }
+        _ => Err(format!("Invalid key binding: {s}")),
+    }
+}
+
+/// Resolved keybindings with defaults applied
+#[derive(Debug, Clone, Copy)]
+pub struct KeyBindings {
+    pub resume: KeyBinding,
+    pub fork: KeyBinding,
+    pub delete: KeyBinding,
+}
+
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self {
+            resume: KeyBinding {
+                code: KeyCode::Char('r'),
+                modifiers: KeyModifiers::CONTROL,
+            },
+            fork: KeyBinding {
+                code: KeyCode::Char('f'),
+                modifiers: KeyModifiers::CONTROL,
+            },
+            delete: KeyBinding {
+                code: KeyCode::Char('x'),
+                modifiers: KeyModifiers::CONTROL,
+            },
+        }
+    }
+}
+
+impl KeyBindings {
+    pub fn from_config(config: Option<KeysConfig>) -> Self {
+        let defaults = Self::default();
+        match config {
+            None => defaults,
+            Some(cfg) => Self {
+                resume: cfg.resume.unwrap_or(defaults.resume),
+                fork: cfg.fork.unwrap_or(defaults.fork),
+                delete: cfg.delete.unwrap_or(defaults.delete),
+            },
+        }
+    }
 }
 
 /// Returns the path to the configuration file: ~/.config/claude-history/config.toml
