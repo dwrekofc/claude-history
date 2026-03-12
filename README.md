@@ -135,6 +135,8 @@ conversations in a ledger-style format with scrolling support.
 - **Cycle tools**: Press `t` to cycle tool display (off → truncated → full)
 - **Toggle thinking**: Press `T` to show/hide thinking blocks
 - **Show path**: Press `p` to display the conversation file path
+- **Light/dark theme**: Automatically detects terminal background color and
+  applies an appropriate color theme
 
 Press `q` or `Esc` to return to the conversation list.
 

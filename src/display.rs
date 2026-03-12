@@ -6,6 +6,7 @@ use crate::error::Result;
 use crate::markdown::render_markdown;
 use crate::pager;
 use crate::tool_format;
+use crate::tui::theme;
 use colored::{ColoredString, Colorize, CustomColor};
 use crossterm::terminal;
 use std::fs::File;
@@ -31,38 +32,33 @@ const NAME_WIDTH: usize = 9;
 const SEPARATOR: &str = " │ ";
 const SEPARATOR_WIDTH: usize = 3; // Display width of " │ "
 
-// Colors matching the TUI theme
-const TEAL: CustomColor = CustomColor {
-    r: 78,
-    g: 201,
-    b: 176,
-};
-const DIM_TEAL: CustomColor = CustomColor {
-    r: 60,
-    g: 160,
-    b: 140,
-};
-const SEPARATOR_COLOR: CustomColor = CustomColor {
-    r: 80,
-    g: 80,
-    b: 80,
-};
-// Colors for tool formatting
-const TOOL_TEXT: CustomColor = CustomColor {
-    r: 140,
-    g: 145,
-    b: 150,
-};
-const DIFF_ADD: CustomColor = CustomColor {
-    r: 120,
-    g: 200,
-    b: 120,
-};
-const DIFF_REMOVE: CustomColor = CustomColor {
-    r: 220,
-    g: 120,
-    b: 120,
-};
+/// Convert a theme RGB tuple to a colored CustomColor
+fn cc(rgb: (u8, u8, u8)) -> CustomColor {
+    CustomColor {
+        r: rgb.0,
+        g: rgb.1,
+        b: rgb.2,
+    }
+}
+
+fn teal() -> CustomColor {
+    cc(theme::detect_theme().accent)
+}
+fn dim_teal() -> CustomColor {
+    cc(theme::detect_theme().accent_dim)
+}
+fn separator_color() -> CustomColor {
+    cc(theme::detect_theme().border)
+}
+fn tool_text() -> CustomColor {
+    cc(theme::detect_theme().tool_text)
+}
+fn diff_add() -> CustomColor {
+    cc(theme::detect_theme().diff_add)
+}
+fn diff_remove() -> CustomColor {
+    cc(theme::detect_theme().diff_remove)
+}
 
 /// Trait for formatting conversation output
 ///
@@ -129,7 +125,7 @@ impl<'a, W: Write + ?Sized> LedgerFormatter<'a, W> {
             } else {
                 let _ = write!(self.writer, "{:>width$}", "", width = NAME_WIDTH);
             }
-            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(separator_color()));
             let _ = writeln!(self.writer, "{}", line);
         }
     }
@@ -138,7 +134,7 @@ impl<'a, W: Write + ?Sized> LedgerFormatter<'a, W> {
     fn print_continuation(&mut self, text: &str) {
         for line in wrap_text(text, self.content_width) {
             let _ = write!(self.writer, "{:>width$}", "", width = NAME_WIDTH);
-            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(separator_color()));
             let _ = writeln!(self.writer, "{}", line.dimmed());
         }
     }
@@ -147,11 +143,11 @@ impl<'a, W: Write + ?Sized> LedgerFormatter<'a, W> {
     fn print_tool_body(&mut self, text: &str) {
         for line in text.lines() {
             let _ = write!(self.writer, "{:>width$}", "", width = NAME_WIDTH);
-            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(separator_color()));
             if line.starts_with("+ ") {
-                let _ = writeln!(self.writer, "{}", line.custom_color(DIFF_ADD));
+                let _ = writeln!(self.writer, "{}", line.custom_color(diff_add()));
             } else if line.starts_with("- ") {
-                let _ = writeln!(self.writer, "{}", line.custom_color(DIFF_REMOVE));
+                let _ = writeln!(self.writer, "{}", line.custom_color(diff_remove()));
             } else {
                 let _ = writeln!(self.writer, "{}", line.dimmed());
             }
@@ -168,7 +164,7 @@ impl<'a, W: Write + ?Sized> LedgerFormatter<'a, W> {
         if lines.is_empty() {
             let padded = format!("{:>width$}", name, width = NAME_WIDTH);
             let _ = write!(self.writer, "{}", style(&padded));
-            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(separator_color()));
             let _ = writeln!(self.writer);
             return;
         }
@@ -180,7 +176,7 @@ impl<'a, W: Write + ?Sized> LedgerFormatter<'a, W> {
             } else {
                 let _ = write!(self.writer, "{:>width$}", "", width = NAME_WIDTH);
             }
-            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+            let _ = write!(self.writer, "{}", SEPARATOR.custom_color(separator_color()));
             let _ = writeln!(self.writer, "{}", line);
         }
     }
@@ -194,7 +190,7 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
 
     fn format_assistant_text(&mut self, text: &str) {
         let rendered = render_markdown(text, self.content_width);
-        self.print_markdown("Claude", |s| s.custom_color(TEAL).bold(), &rendered);
+        self.print_markdown("Claude", |s| s.custom_color(teal()).bold(), &rendered);
     }
 
     fn format_tool_call(&mut self, name: &str, input: &serde_json::Value) {
@@ -202,17 +198,21 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
 
         // Print the header with appropriate styling
         let padded_name = format!("{:>width$}", "Claude", width = NAME_WIDTH);
-        let _ = write!(self.writer, "{}", padded_name.custom_color(DIM_TEAL));
-        let _ = write!(self.writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+        let _ = write!(self.writer, "{}", padded_name.custom_color(dim_teal()));
+        let _ = write!(self.writer, "{}", SEPARATOR.custom_color(separator_color()));
 
         // Print the header in subtle gray
-        let _ = writeln!(self.writer, "{}", formatted.header.custom_color(TOOL_TEXT));
+        let _ = writeln!(
+            self.writer,
+            "{}",
+            formatted.header.custom_color(tool_text())
+        );
 
         // Print the body if present, with empty line separator
         if let Some(body) = formatted.body {
             // Empty line between header and body
             let _ = write!(self.writer, "{:>width$}", "", width = NAME_WIDTH);
-            let _ = writeln!(self.writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+            let _ = writeln!(self.writer, "{}", SEPARATOR.custom_color(separator_color()));
             self.print_tool_body(&body);
         }
     }
@@ -225,11 +225,11 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
         };
 
         // Print with ↳ Result label
-        self.print_markdown("↳ Result", |s| s.custom_color(TOOL_TEXT), &rendered);
+        self.print_markdown("↳ Result", |s| s.custom_color(tool_text()), &rendered);
     }
 
     fn format_thinking(&mut self, thought: &str) {
-        self.print_lines("Thinking", |s| s.custom_color(DIM_TEAL), thought);
+        self.print_lines("Thinking", |s| s.custom_color(dim_teal()), thought);
     }
 
     fn end_message(&mut self) {
@@ -245,7 +245,7 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
     fn format_agent_assistant_text(&mut self, agent_id: &str, text: &str) {
         let rendered = render_markdown(text, self.content_width);
         let name = format!("↳{}", short_agent_id(agent_id));
-        self.print_markdown(&name, |s| s.custom_color(TEAL).dimmed(), &rendered);
+        self.print_markdown(&name, |s| s.custom_color(teal()).dimmed(), &rendered);
     }
 
     fn format_agent_tool_call(&mut self, agent_id: &str, name: &str, input: &serde_json::Value) {
@@ -257,9 +257,9 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
         let _ = write!(
             self.writer,
             "{}",
-            padded_name.custom_color(DIM_TEAL).dimmed()
+            padded_name.custom_color(dim_teal()).dimmed()
         );
-        let _ = write!(self.writer, "{}", SEPARATOR.custom_color(SEPARATOR_COLOR));
+        let _ = write!(self.writer, "{}", SEPARATOR.custom_color(separator_color()));
 
         // Print the header - dimmed for subagents
         let _ = writeln!(self.writer, "{}", formatted.header.dimmed());
@@ -273,7 +273,7 @@ impl<W: Write + ?Sized> OutputFormatter for LedgerFormatter<'_, W> {
     fn format_agent_tool_result(&mut self, _agent_id: &str, content: Option<&serde_json::Value>) {
         self.print_lines(
             "  ↳ Tool",
-            |s| s.custom_color(DIM_TEAL).dimmed(),
+            |s| s.custom_color(dim_teal()).dimmed(),
             "<Result>",
         );
         let content_str = format_tool_content(content);

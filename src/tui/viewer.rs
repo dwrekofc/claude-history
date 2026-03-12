@@ -13,22 +13,16 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 
+use crate::tui::theme::{self, Theme};
+
 const NAME_WIDTH: usize = 9;
 /// Width of timestamp prefix when timing is enabled (space + HH:MM + space)
 const TIMESTAMP_WIDTH: usize = 7;
-const WHITE: (u8, u8, u8) = (255, 255, 255);
-const TEAL: (u8, u8, u8) = (78, 201, 176);
-const DIM_TEAL: (u8, u8, u8) = (60, 160, 140);
-const SEPARATOR_COLOR: (u8, u8, u8) = (80, 80, 80);
-const CODE_COLOR: (u8, u8, u8) = (147, 161, 199);
-const GREEN: (u8, u8, u8) = (0, 255, 0);
-const BLUE: (u8, u8, u8) = (100, 149, 237);
-const THINKING_TEXT: (u8, u8, u8) = (140, 145, 150);
-const HEADING_COLOR: (u8, u8, u8) = (180, 190, 200);
-// Colors for tool formatting
-const TOOL_TEXT: (u8, u8, u8) = (140, 145, 150);
-const DIFF_ADD: (u8, u8, u8) = (120, 200, 120);
-const DIFF_REMOVE: (u8, u8, u8) = (220, 120, 120);
+
+/// Get the current theme (cached after first detection)
+fn th() -> &'static Theme {
+    theme::detect_theme()
+}
 
 /// Maximum body lines shown in truncated tool call mode
 const TRUNCATED_BODY_LINES: usize = 3;
@@ -213,9 +207,22 @@ fn render_user_message(
     if let Some(text) = text {
         let md_lines = render_markdown_to_lines(&text, options.content_width);
         if let Some(ref label) = nested_label {
-            render_ledger_block_styled_dimmed(lines, label, WHITE, md_lines, options.show_timing);
+            render_ledger_block_styled_dimmed(
+                lines,
+                label,
+                th().text_primary,
+                md_lines,
+                options.show_timing,
+            );
         } else {
-            render_ledger_block_styled(lines, "You", WHITE, true, md_lines, ts_remaining);
+            render_ledger_block_styled(
+                lines,
+                "You",
+                th().text_primary,
+                true,
+                md_lines,
+                ts_remaining,
+            );
         }
         printed = true;
         ts_remaining = None;
@@ -233,7 +240,7 @@ fn render_user_message(
                     render_ledger_block_plain_dimmed(
                         lines,
                         "  ↳ Tool",
-                        DIM_TEAL,
+                        th().accent_dim,
                         "<Result>",
                         options.show_timing,
                     );
@@ -346,12 +353,19 @@ fn render_assistant_message(
                 render_ledger_block_styled_dimmed(
                     lines,
                     label,
-                    TEAL,
+                    th().accent,
                     md_lines,
                     options.show_timing,
                 );
             } else {
-                render_ledger_block_styled(lines, "Claude", TEAL, true, md_lines, ts_remaining);
+                render_ledger_block_styled(
+                    lines,
+                    "Claude",
+                    th().accent,
+                    true,
+                    md_lines,
+                    ts_remaining,
+                );
             }
             printed = true;
             // After first block consumes the timestamp, use blank padding for alignment
@@ -376,7 +390,7 @@ fn render_assistant_message(
                         name,
                         input,
                         label,
-                        DIM_TEAL,
+                        th().accent_dim,
                         true,
                         options.content_width,
                         align_ts,
@@ -398,7 +412,7 @@ fn render_assistant_message(
                         name,
                         input,
                         "Claude",
-                        DIM_TEAL,
+                        th().accent_dim,
                         false,
                         options.content_width,
                         ts,
@@ -426,7 +440,14 @@ fn render_assistant_message(
                 } else {
                     None
                 };
-                render_ledger_block_styled(lines, "Thinking", DIM_TEAL, false, styled_lines, ts);
+                render_ledger_block_styled(
+                    lines,
+                    "Thinking",
+                    th().accent_dim,
+                    false,
+                    styled_lines,
+                    ts,
+                );
                 printed = true;
             }
         }
@@ -627,7 +648,7 @@ impl TuiMarkdownRenderer {
                 self.push_styled_text(
                     "> ",
                     LineStyle {
-                        fg: Some(GREEN),
+                        fg: Some(th().green),
                         ..Default::default()
                     },
                 );
@@ -692,7 +713,7 @@ impl TuiMarkdownRenderer {
                         self.push_styled_text(
                             code_line,
                             LineStyle {
-                                fg: Some(CODE_COLOR),
+                                fg: Some(th().code_color),
                                 ..Default::default()
                             },
                         );
@@ -801,7 +822,7 @@ impl TuiMarkdownRenderer {
         self.push_styled_text(
             code,
             LineStyle {
-                fg: Some(CODE_COLOR),
+                fg: Some(th().code_color),
                 ..Default::default()
             },
         );
@@ -865,11 +886,11 @@ impl TuiMarkdownRenderer {
                     }
                 }
                 MarkdownStyle::Strikethrough => style.dimmed = true,
-                MarkdownStyle::Quote => style.fg = Some(GREEN),
-                MarkdownStyle::Link => style.fg = Some(BLUE),
+                MarkdownStyle::Quote => style.fg = Some(th().green),
+                MarkdownStyle::Link => style.fg = Some(th().blue),
                 MarkdownStyle::Heading => {
                     style.bold = true;
-                    style.fg = Some(HEADING_COLOR);
+                    style.fg = Some(th().heading);
                 }
             }
         }
@@ -966,7 +987,7 @@ fn apply_thinking_style(styled_lines: Vec<StyledLine>) -> Vec<StyledLine> {
                 .into_iter()
                 .map(|(text, mut style)| {
                     style.italic = true;
-                    style.fg = Some(THINKING_TEXT);
+                    style.fg = Some(th().thinking_text);
                     (text, style)
                 })
                 .collect(),
@@ -1025,7 +1046,7 @@ fn render_ledger_block_styled(
         spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 ..Default::default()
             },
         ));
@@ -1071,7 +1092,7 @@ fn render_ledger_block_styled(
         spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 ..Default::default()
             },
         ));
@@ -1096,7 +1117,7 @@ fn render_truncation_indicator(
     spans.push((
         " │ ".to_string(),
         LineStyle {
-            fg: Some(SEPARATOR_COLOR),
+            fg: Some(th().border),
             dimmed,
             ..Default::default()
         },
@@ -1157,7 +1178,7 @@ fn render_tool_call(
     spans.push((
         " │ ".to_string(),
         LineStyle {
-            fg: Some(SEPARATOR_COLOR),
+            fg: Some(th().border),
             dimmed,
             ..Default::default()
         },
@@ -1167,7 +1188,7 @@ fn render_tool_call(
     spans.push((
         formatted.header.clone(),
         LineStyle {
-            fg: Some(TOOL_TEXT),
+            fg: Some(th().tool_text),
             dimmed,
             ..Default::default()
         },
@@ -1188,7 +1209,7 @@ fn render_tool_call(
         empty_spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 dimmed,
                 ..Default::default()
             },
@@ -1233,7 +1254,7 @@ fn render_tool_body(lines: &mut Vec<RenderedLine>, text: &str, dimmed: bool, sho
         spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 dimmed,
                 ..Default::default()
             },
@@ -1244,7 +1265,7 @@ fn render_tool_body(lines: &mut Vec<RenderedLine>, text: &str, dimmed: bool, sho
             spans.push((
                 line.to_string(),
                 LineStyle {
-                    fg: Some(DIFF_ADD),
+                    fg: Some(th().diff_add),
                     dimmed,
                     ..Default::default()
                 },
@@ -1253,7 +1274,7 @@ fn render_tool_body(lines: &mut Vec<RenderedLine>, text: &str, dimmed: bool, sho
             spans.push((
                 line.to_string(),
                 LineStyle {
-                    fg: Some(DIFF_REMOVE),
+                    fg: Some(th().diff_remove),
                     dimmed,
                     ..Default::default()
                 },
@@ -1316,7 +1337,7 @@ fn render_tool_result(
             spans.push((
                 format!("{:>width$}", "↳ Result", width = NAME_WIDTH),
                 LineStyle {
-                    fg: Some(TOOL_TEXT),
+                    fg: Some(th().tool_text),
                     ..Default::default()
                 },
             ));
@@ -1328,7 +1349,7 @@ fn render_tool_result(
         spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 ..Default::default()
             },
         ));
@@ -1392,7 +1413,7 @@ fn render_agent_message(
                 render_ledger_block_styled_dimmed(
                     lines,
                     &name,
-                    WHITE,
+                    th().text_primary,
                     md_lines,
                     options.show_timing,
                 );
@@ -1406,7 +1427,7 @@ fn render_agent_message(
                         render_ledger_block_plain_dimmed(
                             lines,
                             "  ↳ Tool",
-                            DIM_TEAL,
+                            th().accent_dim,
                             "<Result>",
                             options.show_timing,
                         );
@@ -1460,7 +1481,7 @@ fn render_agent_message(
                 render_ledger_block_styled_dimmed(
                     lines,
                     &name,
-                    TEAL,
+                    th().accent,
                     md_lines,
                     options.show_timing,
                 );
@@ -1482,7 +1503,7 @@ fn render_agent_message(
                             name,
                             input,
                             &label,
-                            DIM_TEAL,
+                            th().accent_dim,
                             true,
                             options.content_width,
                             align_ts,
@@ -1535,7 +1556,7 @@ fn render_ledger_block_styled_dimmed(
         spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 dimmed: true,
                 ..Default::default()
             },
@@ -1566,7 +1587,7 @@ fn render_ledger_block_styled_dimmed(
         spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 dimmed: true,
                 ..Default::default()
             },
@@ -1609,7 +1630,7 @@ fn render_ledger_block_plain_dimmed(
         spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 dimmed: true,
                 ..Default::default()
             },
@@ -1646,7 +1667,7 @@ fn render_continuation_dimmed(lines: &mut Vec<RenderedLine>, text: &str, show_ti
         spans.push((
             " │ ".to_string(),
             LineStyle {
-                fg: Some(SEPARATOR_COLOR),
+                fg: Some(th().border),
                 dimmed: true,
                 ..Default::default()
             },

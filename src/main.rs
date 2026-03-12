@@ -53,6 +53,10 @@ fn resolve_bool_setting(
 }
 
 fn run() -> Result<()> {
+    // Detect terminal theme before entering raw mode / alternate screen,
+    // as terminal_light queries the terminal for background color
+    tui::theme::detect_theme();
+
     let args = Args::parse();
     let config = config::load_config()?;
 

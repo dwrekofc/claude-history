@@ -1,5 +1,6 @@
 //! Syntax highlighting for code blocks using syntect.
 
+use crate::tui::theme;
 use std::sync::OnceLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, ThemeSet};
@@ -56,7 +57,7 @@ pub fn highlight_code_ansi(code: &str, lang: &str) -> Option<String> {
 
     let lang = normalize_language(lang);
     let syntax = ps.find_syntax_by_token(lang)?;
-    let theme = ts.themes.get("base16-ocean.dark")?;
+    let theme = ts.themes.get(theme::detect_theme().syntect_theme)?;
 
     let mut highlighter = HighlightLines::new(syntax, theme);
     let mut output = String::new();
@@ -89,7 +90,7 @@ pub fn highlight_code_tui(code: &str, lang: &str) -> Option<Vec<Vec<HighlightedT
 
     let lang = normalize_language(lang);
     let syntax = ps.find_syntax_by_token(lang)?;
-    let theme = ts.themes.get("base16-ocean.dark")?;
+    let theme = ts.themes.get(theme::detect_theme().syntect_theme)?;
 
     let mut highlighter = HighlightLines::new(syntax, theme);
     let mut lines = Vec::new();
