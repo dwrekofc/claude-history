@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.32 (2026-03-12)
+
+- Fixed clipboard copy/yank not working on Linux — now uses `wl-copy` on Wayland
+  and `xclip`/`xsel` on X11, with automatic display server detection
+  ([#17](https://github.com/raine/claude-history/pull/17))
+- Fixed resuming sessions from deleted or ephemeral git worktrees failing with
+  an error instead of gracefully recovering
+
 ## v0.1.31 (2026-03-09)
 
 - Search now matches project names, so you can find sessions by the project they
