@@ -827,7 +827,7 @@ impl App {
         if let AppMode::View(ref state) = self.app_mode
             && state.search_mode == ViewSearchMode::Typing
         {
-            return self.handle_search_typing_key(code);
+            return self.handle_search_typing_key(code, modifiers);
         }
 
         // Check configurable keybindings before the match block
@@ -1110,8 +1110,44 @@ impl App {
     }
 
     /// Handle key events while typing a search query
-    fn handle_search_typing_key(&mut self, code: KeyCode) -> Option<Action> {
+    fn handle_search_typing_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Option<Action> {
         match code {
+            // Ctrl+C: cancel search
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                if let AppMode::View(ref mut state) = self.app_mode {
+                    state.search_mode = ViewSearchMode::Off;
+                    state.search_query.clear();
+                    state.search_matches.clear();
+                }
+                None
+            }
+            // Ctrl+U: clear entire query
+            KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
+                if let AppMode::View(ref mut state) = self.app_mode
+                    && !state.search_query.is_empty()
+                {
+                    state.search_query.clear();
+                    self.update_search_results();
+                }
+                None
+            }
+            // Ctrl+W: delete last word
+            KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
+                if let AppMode::View(ref mut state) = self.app_mode {
+                    let trimmed = state.search_query.trim_end();
+                    if let Some(last_space) = trimmed.rfind(|c: char| c.is_whitespace()) {
+                        state.search_query.truncate(last_space + 1);
+                    } else {
+                        state.search_query.clear();
+                    }
+                }
+                self.update_search_results();
+                None
+            }
             KeyCode::Char(c) => {
                 if let AppMode::View(ref mut state) = self.app_mode {
                     state.search_query.push(c);
