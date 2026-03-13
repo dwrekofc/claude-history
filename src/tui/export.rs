@@ -9,7 +9,7 @@
 //! Conversations can be exported to files or copied to the clipboard.
 //! Export respects the current display settings for thinking blocks and tool calls.
 
-use crate::claude::{self, ContentBlock, LogEntry, UserContent, UserMessage};
+use crate::claude::{self, AgentContent, ContentBlock, LogEntry, UserContent, UserMessage};
 use crate::tool_format;
 use chrono::Local;
 use std::fs::{self, File};
@@ -272,6 +272,34 @@ fn format_entry_for_clipboard(entry: &LogEntry, options: ExportOptions) -> Strin
                 }
             }
             let _ = parent_tool_use_id;
+        }
+        LogEntry::Progress { data, .. } => {
+            if let Some(agent_progress) = claude::parse_agent_progress(data) {
+                let AgentContent::Blocks(blocks) = &agent_progress.message.message.content;
+                for block in blocks {
+                    match block {
+                        ContentBlock::Text { text } => {
+                            if !output.is_empty() {
+                                output.push_str("\n\n");
+                            }
+                            output.push_str(text);
+                        }
+                        ContentBlock::ToolUse { name, input, .. } if options.show_tools => {
+                            if !output.is_empty() {
+                                output.push_str("\n\n");
+                            }
+                            output.push_str(&format_tool_call_for_export(name, input));
+                        }
+                        ContentBlock::ToolResult { content, .. } if options.show_tools => {
+                            if !output.is_empty() {
+                                output.push_str("\n\n");
+                            }
+                            output.push_str(&format_tool_result_for_export(content.as_ref()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
         _ => {}
     }

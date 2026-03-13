@@ -118,7 +118,9 @@ pub fn render_conversation(
         }
 
         if let Ok(entry) = serde_json::from_str::<LogEntry>(&line) {
-            let is_message = matches!(entry, LogEntry::User { .. } | LogEntry::Assistant { .. });
+            let is_message = matches!(entry, LogEntry::User { .. } | LogEntry::Assistant { .. })
+                || matches!(&entry, LogEntry::Progress { data, .. }
+                    if options.show_thinking && crate::claude::parse_agent_progress(data).is_some());
             let start_line = lines.len();
             render_entry(&mut lines, &entry, options);
             let end_line = lines.len();
