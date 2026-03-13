@@ -189,11 +189,18 @@ fn score_text(
         }
     }
 
-    // Fallback: all query words were found as substrings (passed fast rejection above)
-    // but not as word prefixes. This handles CJK text and other non-whitespace-delimited
-    // languages where substring matching is the appropriate strategy.
-    // Give a lower score than prefix matches so exact word matches rank higher.
-    (query_words.len() as f64) * 0.5 * recency_multiplier(timestamp, now)
+    // Fallback: substring matching for CJK text.
+    // Only apply when at least one query word contains CJK ideographs, since CJK text
+    // lacks whitespace word boundaries and substring matching is the appropriate strategy.
+    // Without this guard, Latin queries like "ime" would incorrectly match "runtime".
+    let has_cjk = query_words
+        .iter()
+        .any(|w| w.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+    if has_cjk {
+        return (query_words.len() as f64) * 0.5 * recency_multiplier(timestamp, now);
+    }
+
+    0.0
 }
 
 /// Calculate recency multiplier based on age
