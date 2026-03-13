@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.1.42 (2026-03-13)
+
+- Subagent messages are now included in J/K message navigation and single
+  message copy
+- Plain text mode (`--plain`) now supports pager output
+- Fixed `--no-color` flag being ignored in normal (non-render) display mode
+- Fixed text wrapping for CJK characters and emoji that occupy two terminal
+  columns but were counted as one, causing text to overflow
+- Deleting a session in the TUI (`Ctrl+X`) now removes the full session
+  directory, not just the transcript file
+- Fixed a potential crash when deleting a conversation while a search was
+  in-flight
+- Fixed conversations opened by UUID not showing project name or matching
+  workspace filter
+- `--fork-session` now requires `--resume` and shows an error if used alone
+  instead of being silently ignored
+
 ## v0.1.41 (2026-03-13)
 
 - Workspace filter now includes conversations from git worktrees of the same
