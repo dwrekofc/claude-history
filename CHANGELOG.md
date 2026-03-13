@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.40 (2026-03-13)
+
+- Search typing is now smoother — search runs in a background thread so
+  keystrokes no longer block the UI, especially with large history
+- Global view is now the default — all conversations are shown on launch instead
+  of only the current workspace's sessions
+  ([#21](https://github.com/raine/claude-history/pull/21))
+- Added `Tab` key to toggle between global and workspace-only view in the TUI
+  ([#21](https://github.com/raine/claude-history/pull/21))
+- Added `-L`/`--local` flag to start with workspace filter active
+- Deprecated `--global`/`-g` flag and `global` config option — global is now the
+  default behavior
+
 ## v0.1.39 (2026-03-13)
 
 - Added `--delete` flag to remove a session by its ID directly from the command
