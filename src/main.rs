@@ -67,6 +67,11 @@ fn run() -> Result<()> {
     let resume_config = config.resume.unwrap_or_default();
     let default_args = resume_config.default_args.as_deref().unwrap_or(&[]);
 
+    // Disable colors globally when --no-color is passed
+    if args.no_color {
+        colored::control::set_override(false);
+    }
+
     // Resolve keybindings
     let keys = config::KeyBindings::from_config(config.keys);
 
@@ -277,7 +282,7 @@ fn run() -> Result<()> {
         show_thinking,
         debug_level: args.debug,
         use_pager,
-        no_color: false, // Regular display uses the colored crate which handles this automatically
+        no_color: args.no_color,
     };
 
     if plain_mode {
