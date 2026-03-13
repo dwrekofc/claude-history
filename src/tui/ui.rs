@@ -852,18 +852,31 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
         }
     };
 
-    // Build search line: " ❯ query" on left, "status " on right
+    // Scope indicator: [All] or [Workspace]
+    let scope_label = if app.workspace_filter() { "Workspace" } else { "All" };
+    let scope_text = format!("[{}]", scope_label);
+    let scope_display_len = scope_text.chars().count();
+
+    // Build search line: " ❯ [Scope] query" on left, "status " on right
     let query = app.query();
-    // prefix " ❯ " is 3 display columns
-    let left_width = 3 + query
-        .chars()
-        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
-        .sum::<usize>();
+    // prefix " ❯ " = 3 columns, scope + " " separator
+    let prefix_width = 3 + scope_display_len + 1;
+    let left_width = prefix_width
+        + query
+            .chars()
+            .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+            .sum::<usize>();
     let count_len = status_text.chars().count() + 1; // +1 for trailing space
     let padding = (area.width as usize).saturating_sub(left_width + count_len + 1);
 
     // Prompt is always active - user can type during loading
     let prompt_style = Style::default().fg(rgb(th().accent));
+
+    let scope_style = if app.workspace_filter() {
+        Style::default().fg(rgb(th().accent)).bold()
+    } else {
+        Style::default().fg(rgb(th().text_muted))
+    };
 
     let status_style = if app.is_loading() {
         Style::default().fg(rgb(th().accent)) // Highlight loading status
@@ -873,7 +886,9 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     let search_line = Line::from(vec![
         Span::raw(" "),
-        Span::styled("❯ ", prompt_style),
+        Span::styled("\u{276F} ", prompt_style),
+        Span::styled(scope_text, scope_style),
+        Span::raw(" "),
         Span::raw(query.to_string()),
         Span::raw(" ".repeat(padding)),
         Span::styled(status_text, status_style),
@@ -888,8 +903,8 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     frame.render_widget(input, area);
 
-    // Position cursor at cursor_pos (account for " ❯ " prefix = 3 columns)
-    if area.width > 3 {
+    // Position cursor at cursor_pos (account for " ❯ [Scope] " prefix)
+    if area.width > prefix_width as u16 {
         let cursor_offset: u16 = app
             .query()
             .chars()
@@ -898,7 +913,7 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
             .sum::<usize>()
             .min(u16::MAX as usize) as u16;
         let max_x = area.x + area.width.saturating_sub(2);
-        let cursor_x = (area.x + 3).saturating_add(cursor_offset).min(max_x);
+        let cursor_x = (area.x + prefix_width as u16).saturating_add(cursor_offset).min(max_x);
         frame.set_cursor_position(Position::new(cursor_x, area.y));
     }
 }
@@ -1026,6 +1041,7 @@ fn render_help_overlay(
             ("Ctrl+K".into(), "Kill to end of line"),
             ("PgUp / PgDn".into(), "Jump by page"),
             ("Home / End".into(), "Jump to first/last"),
+            ("Tab".into(), "Toggle All/Workspace"),
             ("Enter".into(), "Open viewer"),
             ("Ctrl+O".into(), "Select and exit"),
             ("Ctrl+W".into(), "Delete word"),

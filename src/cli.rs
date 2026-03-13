@@ -116,9 +116,17 @@ pub struct Args {
     #[arg(
         long,
         short = 'g',
-        help = "Search all conversations from all projects at once"
+        help = "Search all conversations from all projects at once (default behavior)"
     )]
     pub global: bool,
+
+    /// Show only conversations from the current workspace
+    #[arg(
+        long,
+        short = 'L',
+        help = "Show only conversations from the current workspace directory"
+    )]
+    pub local: bool,
 
     /// Display output through a pager (less)
     #[arg(long, group = "pager_display")]

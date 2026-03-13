@@ -153,14 +153,38 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    let use_global = resolve_bool_setting(args.global, false, config.global, false);
+    // config.global=false means "workspace only" in old config, which maps to local=true
+    let config_local = config.global.map(|g| !g);
+    let use_local = resolve_bool_setting(args.local, args.global, config_local, false);
 
-    // Determine how to load conversations based on mode
-    let (conversations, selected_path) = if use_global {
-        // Global Search (-g) - use streaming loader for instant startup
-        let rx = history::load_all_conversations_streaming(show_last, args.debug);
+    // Determine the current workspace's project directory name (for workspace filter)
+    let current_dir = std::env::current_dir().ok();
+    let current_project_dir_name = current_dir
+        .as_ref()
+        .map(|d| history::convert_path_to_project_dir_name(d));
 
-        match tui::run_with_loader(rx, tool_display, show_thinking, keys)? {
+    // Handle --show-dir flag (needs current_dir)
+    if args.show_dir {
+        if let Some(ref dir) = current_dir {
+            let projects_dir = history::get_claude_projects_dir(dir)?;
+            println!("{}", projects_dir.display());
+            return Ok(());
+        } else {
+            return Err(AppError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Failed to get current directory",
+            )));
+        }
+    }
+
+    // --local starts with workspace filter on; default is global (filter off)
+    let workspace_filter = use_local;
+
+    // Always use streaming global loader for all conversations
+    let rx = history::load_all_conversations_streaming(show_last, args.debug);
+
+    let (conversations, selected_path) =
+        match tui::run_with_loader(rx, tool_display, show_thinking, keys, workspace_filter, current_project_dir_name)? {
             (tui::Action::Select(path), convs) => (convs, path),
             (tui::Action::Resume(path), convs) => {
                 let conv = convs.iter().find(|c| c.path == path);
@@ -176,54 +200,7 @@ fn run() -> Result<()> {
             }
             (tui::Action::Quit, _) => return Err(AppError::SelectionCancelled),
             (tui::Action::Delete(_), _) => unreachable!("Delete is handled internally"),
-        }
-    } else {
-        // Current Directory mode - synchronous loading is fast enough
-        let current_dir = std::env::current_dir().map_err(|e| {
-            AppError::Io(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Failed to get current directory: {}", e),
-            ))
-        })?;
-
-        let projects_dir = history::get_claude_projects_dir(&current_dir)?;
-
-        // If --show-dir flag is set, print directory and exit
-        if args.show_dir {
-            println!("{}", projects_dir.display());
-            return Ok(());
-        }
-
-        if !projects_dir.exists() {
-            return Err(AppError::ProjectsDirNotFound(
-                projects_dir.display().to_string(),
-            ));
-        }
-
-        let conversations = history::load_conversations(&projects_dir, show_last, args.debug)?;
-
-        if conversations.is_empty() {
-            return Err(AppError::NoHistoryFound("selected scope".to_string()));
-        }
-
-        match tui::run(conversations.clone(), tool_display, show_thinking, keys)? {
-            tui::Action::Select(path) => (conversations, path),
-            tui::Action::Resume(path) => {
-                let conv = conversations.iter().find(|c| c.path == path);
-                let project_path = conv.and_then(|c| c.project_path.as_ref());
-                resume_with_claude(&path, project_path, default_args, false)?;
-                return Ok(());
-            }
-            tui::Action::ForkResume(path) => {
-                let conv = conversations.iter().find(|c| c.path == path);
-                let project_path = conv.and_then(|c| c.project_path.as_ref());
-                resume_with_claude(&path, project_path, default_args, true)?;
-                return Ok(());
-            }
-            tui::Action::Quit => return Err(AppError::SelectionCancelled),
-            tui::Action::Delete(_) => unreachable!("Delete is handled internally"),
-        }
-    };
+        };
 
     if args.show_path {
         println!("{}", selected_path.display());

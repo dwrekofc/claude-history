@@ -159,6 +159,10 @@ pub struct App {
     single_file_mode: bool,
     /// Configurable keybindings
     keys: KeyBindings,
+    /// Whether workspace filter is active (only show current project's conversations)
+    workspace_filter: bool,
+    /// The encoded project directory name for the current workspace (for filtering)
+    current_project_dir_name: Option<String>,
 }
 
 impl App {
@@ -189,6 +193,8 @@ impl App {
             show_timing: false,
             single_file_mode: false,
             keys,
+            workspace_filter: false,
+            current_project_dir_name: None,
         }
     }
 
@@ -197,6 +203,8 @@ impl App {
         tool_display: ToolDisplayMode,
         show_thinking: bool,
         keys: KeyBindings,
+        workspace_filter: bool,
+        current_project_dir_name: Option<String>,
     ) -> Self {
         Self {
             conversations: Vec::new(),
@@ -214,6 +222,8 @@ impl App {
             show_timing: false,
             single_file_mode: false,
             keys,
+            workspace_filter,
+            current_project_dir_name,
         }
     }
 
@@ -273,6 +283,8 @@ impl App {
             show_timing: false,
             single_file_mode: true,
             keys,
+            workspace_filter: false,
+            current_project_dir_name: None,
         }
     }
 
@@ -289,7 +301,22 @@ impl App {
 
         // Update filtered so items appear in the list during loading
         // (Items shown in arrival order initially, will be re-sorted in finish_loading)
-        self.filtered.extend(start_idx..end_idx);
+        // Apply workspace filter during loading too
+        for idx in start_idx..end_idx {
+            if self.workspace_filter {
+                if let Some(ref project_dir_name) = self.current_project_dir_name {
+                    if !self.conversations[idx]
+                        .path
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .is_some_and(|name| name.to_string_lossy() == *project_dir_name)
+                    {
+                        continue;
+                    }
+                }
+            }
+            self.filtered.push(idx);
+        }
 
         // Select first item if nothing selected yet
         if self.selected.is_none() && !self.filtered.is_empty() {
@@ -318,9 +345,9 @@ impl App {
 
         self.loading_state = LoadingState::Ready;
 
-        // Apply any query that was typed during loading
-        if self.query.is_empty() {
-            // Reset filtered to all indices
+        // Apply filter (handles both query and workspace filter)
+        if self.query.is_empty() && !self.workspace_filter {
+            // No query and no workspace filter - show all
             self.filtered = (0..self.conversations.len()).collect();
             self.selected = if self.filtered.is_empty() {
                 None
@@ -328,7 +355,7 @@ impl App {
                 Some(0)
             };
         } else {
-            // User typed during loading, apply the filter now
+            // Has query or workspace filter active - apply full filter
             self.update_filter();
         }
     }
@@ -360,7 +387,22 @@ impl App {
         }
 
         let now = Local::now();
-        self.filtered = search::search(&self.conversations, &self.searchable, &self.query, now);
+        let mut filtered = search::search(&self.conversations, &self.searchable, &self.query, now);
+
+        // Apply workspace filter if active
+        if self.workspace_filter {
+            if let Some(ref project_dir_name) = self.current_project_dir_name {
+                filtered.retain(|&idx| {
+                    self.conversations[idx]
+                        .path
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .is_some_and(|name| name.to_string_lossy() == *project_dir_name)
+                });
+            }
+        }
+
+        self.filtered = filtered;
         self.selected = if self.filtered.is_empty() {
             None
         } else {
@@ -502,6 +544,19 @@ impl App {
 
     pub fn is_single_file_mode(&self) -> bool {
         self.single_file_mode
+    }
+
+    pub fn workspace_filter(&self) -> bool {
+        self.workspace_filter
+    }
+
+    /// Toggle between global and workspace-only view
+    fn toggle_workspace_filter(&mut self) {
+        // Only toggle if we have a workspace context
+        if self.current_project_dir_name.is_some() {
+            self.workspace_filter = !self.workspace_filter;
+            self.update_filter();
+        }
     }
 
     /// Move cursor left by one character
@@ -1284,6 +1339,11 @@ impl App {
                     self.delete_word_backwards();
                     None
                 }
+                // Tab: toggle workspace/global filter
+                KeyCode::Tab => {
+                    self.toggle_workspace_filter();
+                    None
+                }
                 // Open help overlay
                 KeyCode::Char('?') => {
                     self.dialog_mode = DialogMode::Help;
@@ -1452,6 +1512,11 @@ impl App {
                 if self.delete_word_backwards() {
                     self.update_filter();
                 }
+                None
+            }
+            // Tab: toggle workspace/global filter
+            KeyCode::Tab => {
+                self.toggle_workspace_filter();
                 None
             }
             // Open help overlay
@@ -1965,6 +2030,7 @@ fn drain_events(wait: Duration) -> Result<Vec<Event>> {
 }
 
 /// Run the TUI and return the selected conversation path or None if cancelled
+#[allow(dead_code)]
 pub fn run(
     conversations: Vec<Conversation>,
     tool_display: ToolDisplayMode,
@@ -2073,6 +2139,8 @@ pub fn run_with_loader(
     tool_display: ToolDisplayMode,
     show_thinking: bool,
     keys: KeyBindings,
+    workspace_filter: bool,
+    current_project_dir_name: Option<String>,
 ) -> Result<(Action, Vec<Conversation>)> {
     // Set up panic hook to restore terminal
     let original_hook = std::panic::take_hook();
@@ -2083,7 +2151,7 @@ pub fn run_with_loader(
     }));
 
     let mut guard = TerminalGuard::new()?;
-    let mut app = App::new_loading(tool_display, show_thinking, keys);
+    let mut app = App::new_loading(tool_display, show_thinking, keys, workspace_filter, current_project_dir_name);
 
     loop {
         // Process all pending loader messages (non-blocking)
