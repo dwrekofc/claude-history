@@ -43,6 +43,7 @@ impl fmt::Display for DebugLevel {
 #[derive(Parser, Debug)]
 #[command(name = "claude-history")]
 #[command(about = "View Claude conversation history")]
+#[command(version)]
 pub struct Args {
     /// Show tool calls in the conversation output
     #[arg(long, short = 't', group = "tools_display")]

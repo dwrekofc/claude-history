@@ -193,6 +193,7 @@ Options:
       --pager            Display output through a pager (less)
       --no-pager         Disable pager output
   -h, --help             Print help
+  -V, --version          Print version
 ```
 
 ### Preview modes
