@@ -86,7 +86,7 @@ pub struct Args {
     pub resume: bool,
 
     /// Fork the session when resuming (creates a new session branching from the original)
-    #[arg(long, help = "Fork the session when resuming")]
+    #[arg(long, help = "Fork the session when resuming", requires = "resume")]
     pub fork_session: bool,
 
     /// Print the selected conversation's file path and exit
