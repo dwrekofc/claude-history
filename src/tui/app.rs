@@ -966,6 +966,14 @@ impl App {
             self.selected = Some(self.filtered.len() - 1);
         }
         // else: selected stays the same (now pointing to next item)
+
+        // Sync updated data to the background search worker and bump generation
+        // to discard any in-flight results computed against stale data
+        let _ = self.search_tx.send(SearchCommand::UpdateData {
+            conversations: Arc::new(self.conversations.clone()),
+            searchable: Arc::new(self.searchable.clone()),
+        });
+        self.search_generation += 1;
     }
 
     /// Handle a key event during confirmation mode
