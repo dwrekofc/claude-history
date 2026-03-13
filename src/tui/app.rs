@@ -13,7 +13,8 @@ use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::prelude::*;
 use std::io::{self, Stdout};
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
+use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 /// Result of running the TUI
@@ -127,6 +128,106 @@ pub enum LoadingState {
     Ready,
 }
 
+/// Command sent to the background search worker
+enum SearchCommand {
+    /// Update the dataset the worker searches over
+    UpdateData {
+        conversations: Arc<Vec<Conversation>>,
+        searchable: Arc<Vec<SearchableConversation>>,
+    },
+    /// Run a search query
+    Search {
+        query: String,
+        generation: u64,
+        workspace_filter: bool,
+        project_dir_name: Option<String>,
+    },
+}
+
+/// Result returned from the background search worker
+struct SearchResponse {
+    filtered: Vec<usize>,
+    generation: u64,
+}
+
+/// Spawn the background search worker thread.
+/// Returns (sender for commands, receiver for results).
+fn spawn_search_worker() -> (mpsc::Sender<SearchCommand>, mpsc::Receiver<SearchResponse>) {
+    let (cmd_tx, cmd_rx) = mpsc::channel::<SearchCommand>();
+    let (res_tx, res_rx) = mpsc::channel::<SearchResponse>();
+
+    std::thread::Builder::new()
+        .name("search-worker".into())
+        .spawn(move || {
+            let mut conversations: Arc<Vec<Conversation>> = Arc::new(Vec::new());
+            let mut searchable: Arc<Vec<SearchableConversation>> = Arc::new(Vec::new());
+
+            while let Ok(cmd) = cmd_rx.recv() {
+                match cmd {
+                    SearchCommand::UpdateData {
+                        conversations: c,
+                        searchable: s,
+                    } => {
+                        conversations = c;
+                        searchable = s;
+                    }
+                    SearchCommand::Search {
+                        mut query,
+                        mut generation,
+                        mut workspace_filter,
+                        mut project_dir_name,
+                    } => {
+                        // Drain pending commands: apply all data updates,
+                        // keep only the latest search request
+                        while let Ok(pending) = cmd_rx.try_recv() {
+                            match pending {
+                                SearchCommand::UpdateData {
+                                    conversations: c,
+                                    searchable: s,
+                                } => {
+                                    conversations = c;
+                                    searchable = s;
+                                }
+                                SearchCommand::Search {
+                                    query: q,
+                                    generation: g,
+                                    workspace_filter: wf,
+                                    project_dir_name: pdn,
+                                } => {
+                                    query = q;
+                                    generation = g;
+                                    workspace_filter = wf;
+                                    project_dir_name = pdn;
+                                }
+                            }
+                        }
+
+                        let now = chrono::Local::now();
+                        let mut filtered = search::search(&conversations, &searchable, &query, now);
+
+                        if workspace_filter && let Some(ref dir_name) = project_dir_name {
+                            filtered.retain(|&idx| {
+                                conversations[idx]
+                                    .path
+                                    .parent()
+                                    .and_then(|p| p.file_name())
+                                    .is_some_and(|name| name.to_string_lossy() == *dir_name)
+                            });
+                        }
+
+                        let _ = res_tx.send(SearchResponse {
+                            filtered,
+                            generation,
+                        });
+                    }
+                }
+            }
+        })
+        .expect("failed to spawn search worker thread");
+
+    (cmd_tx, res_rx)
+}
+
 /// App state
 pub struct App {
     /// All loaded conversations
@@ -163,6 +264,14 @@ pub struct App {
     workspace_filter: bool,
     /// The encoded project directory name for the current workspace (for filtering)
     current_project_dir_name: Option<String>,
+    /// Channel to send commands to the background search worker
+    search_tx: mpsc::Sender<SearchCommand>,
+    /// Channel to receive results from the background search worker
+    search_rx: mpsc::Receiver<SearchResponse>,
+    /// Monotonic generation counter for search requests
+    search_generation: u64,
+    /// Whether a search is currently in-flight on the worker thread
+    search_in_flight: bool,
 }
 
 impl App {
@@ -177,6 +286,13 @@ impl App {
         let searchable = search::precompute_search_text(&conversations);
         let filtered: Vec<usize> = (0..conversations.len()).collect();
         let selected = if filtered.is_empty() { None } else { Some(0) };
+        let (search_tx, search_rx) = spawn_search_worker();
+
+        // Send initial data to the worker
+        let _ = search_tx.send(SearchCommand::UpdateData {
+            conversations: Arc::new(conversations.clone()),
+            searchable: Arc::new(searchable.clone()),
+        });
 
         Self {
             conversations,
@@ -196,6 +312,10 @@ impl App {
             keys,
             workspace_filter: false,
             current_project_dir_name: None,
+            search_tx,
+            search_rx,
+            search_generation: 0,
+            search_in_flight: false,
         }
     }
 
@@ -207,6 +327,8 @@ impl App {
         workspace_filter: bool,
         current_project_dir_name: Option<String>,
     ) -> Self {
+        let (search_tx, search_rx) = spawn_search_worker();
+
         Self {
             conversations: Vec::new(),
             searchable: Vec::new(),
@@ -225,6 +347,10 @@ impl App {
             keys,
             workspace_filter,
             current_project_dir_name,
+            search_tx,
+            search_rx,
+            search_generation: 0,
+            search_in_flight: false,
         }
     }
 
@@ -235,6 +361,8 @@ impl App {
         show_thinking: bool,
         keys: KeyBindings,
     ) -> Self {
+        let (search_tx, search_rx) = spawn_search_worker();
+
         // Parse using the same parser as the main list
         let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
 
@@ -286,6 +414,10 @@ impl App {
             keys,
             workspace_filter: false,
             current_project_dir_name: None,
+            search_tx,
+            search_rx,
+            search_generation: 0,
+            search_in_flight: false,
         }
     }
 
@@ -341,6 +473,12 @@ impl App {
 
         // Now precompute search text (only once, at the end)
         self.searchable = search::precompute_search_text(&self.conversations);
+
+        // Send data snapshot to the background search worker
+        let _ = self.search_tx.send(SearchCommand::UpdateData {
+            conversations: Arc::new(self.conversations.clone()),
+            searchable: Arc::new(self.searchable.clone()),
+        });
 
         self.loading_state = LoadingState::Ready;
 
@@ -409,6 +547,50 @@ impl App {
         };
     }
 
+    /// Dispatch a search to the background worker.
+    /// UUID queries are handled synchronously (rare, needs to modify data).
+    fn dispatch_search(&mut self) {
+        let query = self.query.trim().to_string();
+
+        // UUID search: synchronous (rare, needs to modify conversations)
+        if search::is_uuid(&query) {
+            if let Some(idx) = self.find_or_load_uuid(&query) {
+                self.filtered = vec![idx];
+                self.selected = Some(0);
+            }
+            return;
+        }
+
+        self.search_generation += 1;
+        self.search_in_flight = true;
+        let _ = self.search_tx.send(SearchCommand::Search {
+            query,
+            generation: self.search_generation,
+            workspace_filter: self.workspace_filter,
+            project_dir_name: self.current_project_dir_name.clone(),
+        });
+    }
+
+    /// Check for completed search results from the background worker.
+    /// Returns true if results were applied.
+    pub fn receive_search_results(&mut self) -> bool {
+        let mut applied = false;
+        while let Ok(response) = self.search_rx.try_recv() {
+            // Only apply the result if it matches the latest generation
+            if response.generation == self.search_generation {
+                self.filtered = response.filtered;
+                self.selected = if self.filtered.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                };
+                self.search_in_flight = false;
+                applied = true;
+            }
+        }
+        applied
+    }
+
     /// Find a conversation by UUID in loaded conversations, or load it from disk.
     fn find_or_load_uuid(&mut self, uuid: &str) -> Option<usize> {
         // Check already-loaded conversations
@@ -433,6 +615,12 @@ impl App {
 
         // Rebuild search index to include the new conversation
         self.searchable = search::precompute_search_text(&self.conversations);
+
+        // Update the worker's data snapshot
+        let _ = self.search_tx.send(SearchCommand::UpdateData {
+            conversations: Arc::new(self.conversations.clone()),
+            searchable: Arc::new(self.searchable.clone()),
+        });
 
         Some(idx)
     }
@@ -1483,7 +1671,7 @@ impl App {
             // Ctrl+K: kill from cursor to end of line
             KeyCode::Char('k') if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.kill_to_end() {
-                    self.update_filter();
+                    self.dispatch_search();
                 }
                 None
             }
@@ -1503,7 +1691,7 @@ impl App {
             // Ctrl+U - kill from beginning of line to cursor (emacs-style)
             KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.kill_to_start() {
-                    self.update_filter();
+                    self.dispatch_search();
                 }
                 None
             }
@@ -1513,7 +1701,7 @@ impl App {
             }
             KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.delete_word_backwards() {
-                    self.update_filter();
+                    self.dispatch_search();
                 }
                 None
             }
@@ -1537,7 +1725,7 @@ impl App {
                     .unwrap_or(self.query.len());
                 self.query.insert(byte_pos, c);
                 self.cursor_pos += 1;
-                self.update_filter();
+                self.dispatch_search();
                 None
             }
             KeyCode::Backspace => {
@@ -1550,7 +1738,7 @@ impl App {
                     changed = true;
                 }
                 if changed {
-                    self.update_filter();
+                    self.dispatch_search();
                 }
                 None
             }
@@ -1564,7 +1752,7 @@ impl App {
                     changed = true;
                 }
                 if changed {
-                    self.update_filter();
+                    self.dispatch_search();
                 }
                 None
             }
@@ -2105,13 +2293,19 @@ pub fn run_with_loader(
         // Check for resize in view mode
         app.check_view_resize(content_width, viewport_height);
 
+        // Pick up any completed search results from the background worker
+        app.receive_search_results();
+
         // Render current state
         guard.terminal.draw(|frame| ui::render(frame, &app))?;
 
-        // Use short poll timeout while loading (to check for loader messages),
+        // Use short poll timeout while loading or search is in-flight,
         // otherwise block until input arrives (or until status message expires)
         let poll_timeout = if app.is_loading() {
             Duration::from_millis(50)
+        } else if app.search_in_flight {
+            // Poll frequently so search results appear quickly (within ~8ms)
+            Duration::from_millis(8)
         } else if let Some(remaining) = app.status_message_remaining() {
             remaining
         } else {

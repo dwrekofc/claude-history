@@ -3,6 +3,7 @@ use chrono::{DateTime, Duration, Local};
 use rayon::prelude::*;
 
 /// Precomputed search data for a conversation
+#[derive(Clone)]
 pub struct SearchableConversation {
     /// Lowercased full text for searching
     pub text_lower: String,
