@@ -357,9 +357,6 @@ Create the config file:
 ```sh
 mkdir -p ~/.config/claude-history
 cat > ~/.config/claude-history/config.toml << 'EOF'
-# Always use global search (default: false)
-# global = false
-
 [display]
 # Tool display: true = hidden, false = full (default: unset = truncated)
 # no_tools = false
