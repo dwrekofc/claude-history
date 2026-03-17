@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.44 (2026-03-17)
+
+- Added support for `CLAUDE_CONFIG_DIR` environment variable — users with custom
+  Claude config directories can now use claude-history without workaround
+  ([#24](https://github.com/raine/claude-history/issues/24))
+
 ## v0.1.43 (2026-03-14)
 
 - Added `claude-history update` command for self-updating the binary directly
