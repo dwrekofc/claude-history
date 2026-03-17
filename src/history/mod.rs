@@ -83,15 +83,21 @@ pub enum LoaderMessage {
 }
 
 /// Get the root Claude projects directory (~/.claude/projects)
+/// Respects CLAUDE_CONFIG_DIR env variable if set.
 pub fn get_claude_projects_root() -> Result<PathBuf> {
-    let home_dir = std::env::var("HOME").map_err(|_| {
-        AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "HOME environment variable not set",
-        ))
-    })?;
+    let claude_dir = if let Ok(config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        PathBuf::from(config_dir)
+    } else {
+        let home_dir = std::env::var("HOME").map_err(|_| {
+            AppError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "HOME environment variable not set",
+            ))
+        })?;
+        PathBuf::from(home_dir).join(".claude")
+    };
 
-    Ok(PathBuf::from(home_dir).join(".claude").join("projects"))
+    Ok(claude_dir.join("projects"))
 }
 
 /// Get the Claude projects directory for the current working directory
