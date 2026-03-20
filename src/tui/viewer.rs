@@ -287,6 +287,14 @@ fn render_user_message(
     let mut ts_remaining = timestamp;
     let nested_label = parent_id.map(subagent_label);
 
+    // Detect if this is a skill invocation message
+    let is_skill = match &message.content {
+        UserContent::String(s) => s.trim().starts_with("Base directory for this skill:"),
+        UserContent::Blocks(blocks) => blocks.iter().any(|block| {
+            matches!(block, ContentBlock::Text { text } if text.trim().starts_with("Base directory for this skill:"))
+        }),
+    };
+
     // Extract text from user message, collecting all text blocks
     let text = match &message.content {
         UserContent::String(s) => process_command_message(s),
@@ -315,6 +323,14 @@ fn render_user_message(
             render_ledger_block_styled_dimmed(
                 lines,
                 label,
+                th().text_primary,
+                md_lines,
+                options.show_timing,
+            );
+        } else if is_skill {
+            render_ledger_block_styled_dimmed(
+                lines,
+                "You",
                 th().text_primary,
                 md_lines,
                 options.show_timing,
@@ -988,10 +1004,7 @@ impl TuiMarkdownRenderer {
             match s {
                 MarkdownStyle::Bold => style.bold = true,
                 MarkdownStyle::Italic => {
-                    // Ratatui doesn't have italic, use a color hint
-                    if style.fg.is_none() {
-                        style.fg = Some((200, 200, 200));
-                    }
+                    style.italic = true;
                 }
                 MarkdownStyle::Strikethrough => style.dimmed = true,
                 MarkdownStyle::Quote => style.fg = Some(th().green),
@@ -1846,9 +1859,14 @@ fn process_command_message(text: &str) -> Option<String> {
         }
     }
 
-    // Skill invocation expanded prompts - show condensed label instead of full prompt
+    // Skill invocation expanded prompts - show description instead of full prompt
     if trimmed.starts_with("Base directory for this skill:") {
-        return Some("Skill invoked".to_string());
+        let description = trimmed
+            .lines()
+            .skip(1)
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("invoked");
+        return Some(format!("*Skill: {}*", description));
     }
 
     Some(text.to_string())

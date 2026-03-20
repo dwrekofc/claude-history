@@ -439,9 +439,14 @@ fn process_command_message(text: &str) -> Option<String> {
         }
     }
 
-    // Skill invocation expanded prompts - show condensed label instead of full prompt
+    // Skill invocation expanded prompts - show description instead of full prompt
     if trimmed.starts_with("Base directory for this skill:") {
-        return Some("Skill invoked".to_string());
+        let description = trimmed
+            .lines()
+            .skip(1)
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("invoked");
+        return Some(format!("*Skill: {}*", description));
     }
 
     // Return original text for non-command messages
@@ -1027,7 +1032,16 @@ mod tests {
         let skill_msg = "Base directory for this skill: /Users/raine/.claude/skills/consult\n\nConsult an external LLM with the user's query.\n\n**Arguments:** `how to add more aliases?`";
         assert_eq!(
             process_command_message(skill_msg),
-            Some("Skill invoked".to_string())
+            Some("*Skill: Consult an external LLM with the user's query.*".to_string())
+        );
+    }
+
+    #[test]
+    fn process_command_message_skill_invocation_fallback() {
+        let skill_msg = "Base directory for this skill: /path/to/skill";
+        assert_eq!(
+            process_command_message(skill_msg),
+            Some("*Skill: invoked*".to_string())
         );
     }
 }
