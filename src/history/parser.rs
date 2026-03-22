@@ -111,21 +111,34 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
                             user_messages.push(preview_text.clone());
                         }
 
-                        if !preview_text.is_empty() && is_clear_metadata_message(&preview_text) {
-                            continue;
-                        }
+                        // Check for skill invocations first - extract clean preview
+                        // (e.g. "/consult how to do X?" from command XML tags)
+                        let effective_preview =
+                            if let Some(skill_preview) = extract_skill_preview(&preview_text) {
+                                skill_preview
+                            } else if !preview_text.is_empty()
+                                && is_clear_metadata_message(&preview_text)
+                            {
+                                if !search_text.is_empty() {
+                                    all_parts.push(search_text);
+                                }
+                                continue;
+                            } else {
+                                preview_text
+                            };
 
                         if !search_text.is_empty() {
                             all_parts.push(search_text);
                         }
 
                         // Check if this is a warmup message (first user message is "Warmup")
-                        let is_warmup = !seen_real_user_message && preview_text.trim() == "Warmup";
+                        let is_warmup =
+                            !seen_real_user_message && effective_preview.trim() == "Warmup";
                         if is_warmup {
                             skip_next_assistant = true;
-                        } else if !preview_text.is_empty() {
+                        } else if !effective_preview.is_empty() {
                             message_count += 1;
-                            preview_parts.push(preview_text);
+                            preview_parts.push(effective_preview);
                             seen_real_user_message = true;
                         }
                     }
@@ -335,7 +348,8 @@ pub(crate) fn process_conversation_reader<R: BufRead>(
     }))
 }
 
-/// Detects metadata emitted by the /clear command wrapper messages
+/// Detects metadata emitted by the /clear command wrapper messages and
+/// other system-injected boilerplate that should not appear in previews.
 pub(crate) fn is_clear_metadata_message(message: &str) -> bool {
     let trimmed = message.trim();
 
@@ -347,8 +361,40 @@ pub(crate) fn is_clear_metadata_message(message: &str) -> bool {
         || trimmed.contains("<command-name>/clear</command-name>")
         || trimmed.contains("<command-message>clear</command-message>")
         || trimmed.contains("<local-command-stdout>")
-        || trimmed.contains("<command-args>")
         || trimmed.starts_with("Base directory for this skill:")
+}
+
+/// Extract a clean preview from a skill invocation message (e.g. "/consult how to do X?").
+/// Returns None if the message is not a skill invocation or is a /clear command.
+pub(crate) fn extract_skill_preview(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+
+    let start = trimmed.find("<command-name>")?;
+    let end = trimmed.find("</command-name>")?;
+    let content_start = start + "<command-name>".len();
+    if content_start >= end {
+        return None;
+    }
+
+    let command_name = &trimmed[content_start..end];
+    if command_name == "/clear" {
+        return None;
+    }
+
+    // Extract command args if present
+    if let Some(args_start) = trimmed.find("<command-args>")
+        && let Some(args_end) = trimmed.find("</command-args>")
+    {
+        let args_content_start = args_start + "<command-args>".len();
+        if args_content_start < args_end {
+            let args = trimmed[args_content_start..args_end].trim();
+            if !args.is_empty() {
+                return Some(format!("{} {}", command_name, args));
+            }
+        }
+    }
+
+    Some(command_name.to_string())
 }
 
 /// Check if a conversation only contains /clear command messages
@@ -709,7 +755,8 @@ mod tests {
         assert!(is_clear_metadata_message(
             "<local-command-stdout>output</local-command-stdout>"
         ));
-        assert!(is_clear_metadata_message(
+        // <command-args> alone should NOT match - it appears in all skill invocations
+        assert!(!is_clear_metadata_message(
             "<command-args>foo</command-args>"
         ));
 
@@ -720,6 +767,79 @@ mod tests {
         // Should NOT match normal messages
         assert!(!is_clear_metadata_message("Hello world"));
         assert!(!is_clear_metadata_message("What is the meaning of life?"));
+
+        // Skill invocation with command-name should NOT be filtered as clear metadata
+        assert!(!is_clear_metadata_message(
+            "<command-message>consult</command-message>\n<command-name>/consult</command-name>\n<command-args>how to do X?</command-args>"
+        ));
+    }
+
+    #[test]
+    fn extract_skill_preview_extracts_command_with_args() {
+        assert_eq!(
+            extract_skill_preview(
+                "<command-message>consult</command-message>\n<command-name>/consult</command-name>\n<command-args>how to do X?</command-args>"
+            ),
+            Some("/consult how to do X?".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_skill_preview_extracts_command_without_args() {
+        assert_eq!(
+            extract_skill_preview("<command-name>/help</command-name>"),
+            Some("/help".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_skill_preview_skips_clear() {
+        assert_eq!(
+            extract_skill_preview(
+                "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_skill_preview_returns_none_for_normal_text() {
+        assert_eq!(extract_skill_preview("Hello world"), None);
+    }
+
+    #[test]
+    fn skill_invocation_conversation_not_filtered() {
+        // A conversation that starts with /clear then has a skill invocation
+        // should NOT be filtered out
+        let content = [
+            user_msg(
+                "Caveat: The messages below were generated by the user while running local commands.",
+                None,
+            ),
+            user_msg(
+                "<command-name>/clear</command-name> <command-message>clear</command-message> <command-args></command-args>",
+                None,
+            ),
+            user_msg("<local-command-stdout></local-command-stdout>", None),
+            user_msg(
+                "<command-message>consult</command-message> <command-name>/consult</command-name> <command-args>how to implement sidebar?</command-args>",
+                None,
+            ),
+            assistant_msg("Here's how to implement it..."),
+        ]
+        .join("\n");
+
+        let conv = parse_jsonl(&content).unwrap();
+        assert!(
+            conv.is_some(),
+            "Conversation with skill invocation should not be filtered"
+        );
+        let conv = conv.unwrap();
+        assert!(
+            conv.preview.contains("/consult"),
+            "Preview should contain the skill command: {}",
+            conv.preview
+        );
     }
 
     #[test]
