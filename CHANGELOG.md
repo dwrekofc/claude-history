@@ -1,3 +1,8 @@
+## v0.1.47 (2026-03-22)
+
+- Fixed conversations that only contain skill invocations (e.g. `/consult`,
+  `/commit`) being incorrectly filtered out as empty sessions
+
 ## v0.1.46 (2026-03-21)
 
 - Fixed the screen freezing when holding down arrow keys or j/k to scroll — the
