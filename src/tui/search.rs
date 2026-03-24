@@ -180,7 +180,6 @@ fn score_text(
 
     // For each query word, find it at a word boundary (prefix match).
     // Uses find() which is backed by SIMD-accelerated memchr in Rust's std.
-    let text_bytes = text_lower.as_bytes();
     let mut all_prefix_matched = true;
 
     for &qw in query_words {
@@ -190,19 +189,21 @@ fn score_text(
         while let Some(pos) = text_lower[start..].find(qw) {
             let actual_pos = start + pos;
 
-            // Check word boundary: start of string or preceded by whitespace
-            let at_boundary = actual_pos == 0 || text_bytes[actual_pos - 1].is_ascii_whitespace();
+            // Check word boundary: start of string or preceded by whitespace.
+            // Uses char-level check to handle Unicode whitespace correctly.
+            let at_boundary = actual_pos == 0
+                || text_lower[..actual_pos]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_whitespace());
 
             if at_boundary {
                 found = true;
                 break;
             }
-            // Advance past this occurrence (must land on a char boundary for UTF-8 safety)
-            start = actual_pos
-                + text_lower[actual_pos..]
-                    .chars()
-                    .next()
-                    .map_or(1, |c| c.len_utf8());
+            // Advance past the matched substring (actual_pos + qw.len() is always
+            // a valid char boundary since find() matched valid UTF-8 at actual_pos)
+            start = actual_pos + qw.len().max(1);
         }
 
         if !found {
