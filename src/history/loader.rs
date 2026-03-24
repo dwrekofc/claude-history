@@ -471,9 +471,10 @@ pub fn load_conversations(
         // Add negative cache entries for files that parsed to nothing
         for (conv, filename, file_size, modified) in &parse_results {
             if conv.is_none()
-                && let Some(mtime) = modified {
-                    new_cache.insert(filename.to_owned(), cache::empty_entry(*file_size, *mtime));
-                }
+                && let Some(mtime) = modified
+            {
+                new_cache.insert(filename.to_owned(), cache::empty_entry(*file_size, *mtime));
+            }
         }
 
         cache::write_project_cache(project_dir_name, new_cache);

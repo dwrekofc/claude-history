@@ -235,3 +235,192 @@ pub fn entry_matches(entry: &CacheEntry, file_size: u64, mtime: SystemTime) -> b
         && entry.mtime_secs == duration_since_epoch.as_secs()
         && entry.mtime_nsecs == duration_since_epoch.subsec_nanos()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::search::normalize_for_search;
+    use std::time::Duration;
+
+    fn make_test_conversation() -> Conversation {
+        let timestamp = Local::now();
+        Conversation {
+            path: PathBuf::from("/test/conv.jsonl"),
+            index: 0,
+            timestamp,
+            preview: "Hello world ... Hi there".to_string(),
+            preview_first: "Hello world ... Hi there".to_string(),
+            preview_last: "Hi there ... Hello world".to_string(),
+            full_text: "Hello world Hi there".to_string(),
+            search_text_lower: normalize_for_search("Hello world Hi there"),
+            project_name: Some("test-project".to_string()),
+            project_path: Some(PathBuf::from("/test/project")),
+            cwd: Some(PathBuf::from("/test/cwd")),
+            message_count: 2,
+            parse_errors: vec![],
+            summary: Some("Test summary".to_string()),
+            custom_title: Some("My Session".to_string()),
+            model: Some("claude-opus-4-5-20251101".to_string()),
+            total_tokens: 1500,
+            duration_minutes: Some(10),
+        }
+    }
+
+    #[test]
+    fn roundtrip_entry_preserves_data() {
+        let conv = make_test_conversation();
+        let mtime = UNIX_EPOCH + Duration::from_secs(1700000000) + Duration::from_nanos(123456789);
+        let file_size = 42000;
+
+        let entry = entry_from_conversation(&conv, file_size, mtime);
+
+        // Verify entry_matches works
+        assert!(entry_matches(&entry, file_size, mtime));
+        assert!(!entry_matches(&entry, file_size + 1, mtime));
+        assert!(!entry_matches(
+            &entry,
+            file_size,
+            mtime + Duration::from_secs(1)
+        ));
+
+        // Roundtrip back to Conversation
+        let restored = conversation_from_entry(&entry, PathBuf::from("/test/conv.jsonl"), false);
+
+        assert_eq!(restored.preview, conv.preview_first);
+        assert_eq!(restored.preview_first, conv.preview_first);
+        assert_eq!(restored.preview_last, conv.preview_last);
+        assert_eq!(restored.full_text, conv.full_text);
+        assert_eq!(restored.search_text_lower, conv.search_text_lower);
+        assert_eq!(restored.cwd, conv.cwd);
+        assert_eq!(restored.message_count, conv.message_count);
+        assert_eq!(restored.summary, conv.summary);
+        assert_eq!(restored.custom_title, conv.custom_title);
+        assert_eq!(restored.model, conv.model);
+        assert_eq!(restored.total_tokens, conv.total_tokens);
+        assert_eq!(restored.duration_minutes, conv.duration_minutes);
+        // Timestamp roundtrips through milliseconds
+        assert_eq!(
+            restored.timestamp.timestamp_millis(),
+            conv.timestamp.timestamp_millis()
+        );
+    }
+
+    #[test]
+    fn show_last_selects_correct_preview() {
+        let conv = make_test_conversation();
+        let mtime = UNIX_EPOCH + Duration::from_secs(1700000000);
+        let entry = entry_from_conversation(&conv, 100, mtime);
+
+        let first = conversation_from_entry(&entry, PathBuf::new(), false);
+        assert_eq!(first.preview, "Hello world ... Hi there");
+
+        let last = conversation_from_entry(&entry, PathBuf::new(), true);
+        assert_eq!(last.preview, "Hi there ... Hello world");
+    }
+
+    #[test]
+    fn empty_entry_roundtrips() {
+        let mtime = UNIX_EPOCH + Duration::from_secs(1700000000);
+        let entry = empty_entry(500, mtime);
+
+        assert!(entry.is_empty);
+        assert!(entry_matches(&entry, 500, mtime));
+        assert!(!entry_matches(&entry, 501, mtime));
+    }
+
+    #[test]
+    fn cache_file_roundtrip() {
+        // Use a unique project name to avoid test interference
+        let project_name = format!("test-cache-roundtrip-{}", std::process::id());
+
+        let conv = make_test_conversation();
+        let mtime = UNIX_EPOCH + Duration::from_secs(1700000000);
+        let mut entries = HashMap::new();
+        entries.insert(
+            "conv1.jsonl".to_string(),
+            entry_from_conversation(&conv, 42000, mtime),
+        );
+        entries.insert("empty.jsonl".to_string(), empty_entry(100, mtime));
+
+        // Write cache
+        write_project_cache(&project_name, entries);
+
+        // Read it back
+        let loaded = read_project_cache(&project_name);
+        assert!(loaded.is_some(), "Cache file should be readable");
+
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.len(), 2);
+
+        let conv_entry = loaded.get("conv1.jsonl").unwrap();
+        assert!(!conv_entry.is_empty);
+        assert_eq!(conv_entry.full_text, "Hello world Hi there");
+        assert_eq!(conv_entry.total_tokens, 1500);
+
+        let empty = loaded.get("empty.jsonl").unwrap();
+        assert!(empty.is_empty);
+
+        // Clean up
+        if let Some(path) = cache_path_for_project(&project_name) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn corrupt_cache_returns_none() {
+        let project_name = format!("test-corrupt-{}", std::process::id());
+        if let Some(path) = cache_path_for_project(&project_name) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            // Write garbage
+            let _ = std::fs::write(&path, b"not a valid cache file");
+            assert!(read_project_cache(&project_name).is_none());
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn wrong_version_returns_none() {
+        let project_name = format!("test-version-{}", std::process::id());
+        if let Some(path) = cache_path_for_project(&project_name) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            // Write valid magic but wrong version
+            let cache = ProjectCache {
+                magic: CACHE_MAGIC,
+                schema_version: SCHEMA_VERSION + 1,
+                entries: HashMap::new(),
+            };
+            let data = bincode::serialize(&cache).unwrap();
+            let _ = std::fs::write(&path, &data);
+            assert!(read_project_cache(&project_name).is_none());
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn wrong_magic_returns_none() {
+        let project_name = format!("test-magic-{}", std::process::id());
+        if let Some(path) = cache_path_for_project(&project_name) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let cache = ProjectCache {
+                magic: *b"BADMAGIC",
+                schema_version: SCHEMA_VERSION,
+                entries: HashMap::new(),
+            };
+            let data = bincode::serialize(&cache).unwrap();
+            let _ = std::fs::write(&path, &data);
+            assert!(read_project_cache(&project_name).is_none());
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn missing_cache_returns_none() {
+        assert!(read_project_cache("nonexistent-project-xyz-12345").is_none());
+    }
+}
