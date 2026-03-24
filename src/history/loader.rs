@@ -351,12 +351,17 @@ pub fn load_conversations(
             && let Some(entry) = cached_entries.get(filename)
             && cache::entry_matches(entry, *file_size, *mtime)
         {
-            let conv = cache::conversation_from_entry(entry, path.clone(), show_last);
-            debug::debug(
-                debug_level,
-                &format!("Cache hit {}: {}", filename, conv.preview),
-            );
-            conversations.push(conv);
+            if entry.is_empty {
+                // Negative cache hit — file was previously parsed and yielded nothing
+                debug::debug(debug_level, &format!("Cache hit (empty) {}", filename));
+            } else {
+                let conv = cache::conversation_from_entry(entry, path.clone(), show_last);
+                debug::debug(
+                    debug_level,
+                    &format!("Cache hit {}: {}", filename, conv.preview),
+                );
+                conversations.push(conv);
+            }
         } else {
             dirty = true;
             files_to_parse.push((path.clone(), *modified, *file_size));
@@ -378,42 +383,48 @@ pub fn load_conversations(
     );
 
     // Parse only cache misses in parallel
-    let parsed: Vec<Conversation> = files_to_parse
-        .into_par_iter()
-        .filter_map(|(path, modified, _file_size)| {
-            let filename = path
-                .file_name()
-                .and_then(|f| f.to_str())
-                .unwrap_or("unknown")
-                .to_owned();
+    // Returns (Option<Conversation>, filename, file_size, mtime) — None for empty/filtered files
+    let parse_results: Vec<(Option<Conversation>, String, u64, Option<SystemTime>)> =
+        files_to_parse
+            .into_par_iter()
+            .map(|(path, modified, file_size)| {
+                let filename = path
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    .unwrap_or("unknown")
+                    .to_owned();
 
-            match process_conversation_file(path, modified, debug_level) {
-                Ok(Some(mut conversation)) => {
-                    // Set preview based on show_last
-                    conversation.preview = if show_last {
-                        conversation.preview_last.clone()
-                    } else {
-                        conversation.preview_first.clone()
-                    };
-                    debug::debug(
-                        debug_level,
-                        &format!("Parsed {}: {}", filename, conversation.preview),
-                    );
-                    Some(conversation)
+                match process_conversation_file(path, modified, debug_level) {
+                    Ok(Some(mut conversation)) => {
+                        conversation.preview = if show_last {
+                            conversation.preview_last.clone()
+                        } else {
+                            conversation.preview_first.clone()
+                        };
+                        debug::debug(
+                            debug_level,
+                            &format!("Parsed {}: {}", filename, conversation.preview),
+                        );
+                        (Some(conversation), filename, file_size, modified)
+                    }
+                    Ok(None) => (None, filename, file_size, modified),
+                    Err(e) => {
+                        debug::warn(
+                            debug_level,
+                            &format!("Error processing {}: {}", filename, e),
+                        );
+                        (None, filename, file_size, modified)
+                    }
                 }
-                Ok(None) => None,
-                Err(e) => {
-                    debug::warn(
-                        debug_level,
-                        &format!("Error processing {}: {}", filename, e),
-                    );
-                    None
-                }
-            }
-        })
-        .collect();
+            })
+            .collect();
 
-    conversations.extend(parsed);
+    // Separate conversations from empty results (for negative caching)
+    for (conv, _, _, _) in &parse_results {
+        if let Some(conv) = conv {
+            conversations.push(conv.clone());
+        }
+    }
 
     // Ensure deterministic ordering after parallel processing
     conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
@@ -436,6 +447,8 @@ pub fn load_conversations(
     // Write updated cache if anything changed
     if dirty {
         let mut new_cache: HashMap<String, cache::CacheEntry> = HashMap::new();
+
+        // Add existing conversations (both cache hits and fresh parses)
         for conv in &conversations {
             let filename = conv
                 .path
@@ -443,7 +456,6 @@ pub fn load_conversations(
                 .and_then(|f| f.to_str())
                 .unwrap_or("unknown");
 
-            // Look up file metadata from our scan
             if let Some((_, modified, file_size)) = files_with_meta
                 .iter()
                 .find(|(p, _, _)| p.file_name() == conv.path.file_name())
@@ -455,6 +467,15 @@ pub fn load_conversations(
                 );
             }
         }
+
+        // Add negative cache entries for files that parsed to nothing
+        for (conv, filename, file_size, modified) in &parse_results {
+            if conv.is_none()
+                && let Some(mtime) = modified {
+                    new_cache.insert(filename.to_owned(), cache::empty_entry(*file_size, *mtime));
+                }
+        }
+
         cache::write_project_cache(project_dir_name, new_cache);
     }
 

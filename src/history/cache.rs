@@ -8,6 +8,7 @@ use super::{Conversation, ParseError};
 use chrono::{Local, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,6 +29,10 @@ pub struct CacheEntry {
     pub file_size: u64,
     pub mtime_secs: u64,
     pub mtime_nsecs: u32,
+    /// If true, this file was parsed but yielded no conversation (empty/clear-only).
+    /// Avoids re-parsing known-empty files on every startup.
+    #[serde(default)]
+    pub is_empty: bool,
     pub preview_first: String,
     pub preview_last: String,
     pub full_text: String,
@@ -52,9 +57,19 @@ pub struct CachedParseError {
     pub context_after: Vec<String>,
 }
 
-/// Get the cache directory for per-project cache files
+/// Get the cache directory for per-project cache files.
+/// Respects CLAUDE_CONFIG_DIR to namespace caches per config root.
 fn cache_dir() -> Option<PathBuf> {
-    home::home_dir().map(|h| h.join(".cache").join("claude-history").join("projects"))
+    let base = home::home_dir()?.join(".cache").join("claude-history");
+    if let Ok(config_dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        // Namespace by config dir to avoid cross-config cache collisions
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&config_dir, &mut hasher);
+        let hash = std::hash::Hasher::finish(&hasher);
+        Some(base.join(format!("config-{:016x}", hash)).join("projects"))
+    } else {
+        Some(base.join("projects"))
+    }
 }
 
 /// Get the cache file path for a specific project
@@ -81,25 +96,54 @@ pub fn read_project_cache(project_dir_name: &str) -> Option<HashMap<String, Cach
 }
 
 /// Write a project's cache file atomically (temp file + rename).
-/// Silently ignores failures.
+/// Uses tempfile for safe concurrent writes. Silently ignores failures.
 pub fn write_project_cache(project_dir_name: &str, entries: HashMap<String, CacheEntry>) {
     let Some(path) = cache_path_for_project(project_dir_name) else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(parent);
     let cache = ProjectCache {
         magic: CACHE_MAGIC,
         schema_version: SCHEMA_VERSION,
         entries,
     };
-    let tmp_path = path.with_extension("bin.tmp");
     let Ok(data) = bincode::serialize(&cache) else {
         return;
     };
-    if std::fs::write(&tmp_path, &data).is_ok() {
-        let _ = std::fs::rename(&tmp_path, &path);
+    // Use tempfile in the same directory for safe atomic rename
+    let Ok(mut tmp) = tempfile::NamedTempFile::new_in(parent) else {
+        return;
+    };
+    if tmp.write_all(&data).is_err() {
+        return;
+    }
+    let _ = tmp.persist(&path);
+}
+
+/// Create a negative cache entry for files that parsed to no conversation
+pub fn empty_entry(file_size: u64, mtime: SystemTime) -> CacheEntry {
+    let duration_since_epoch = mtime.duration_since(UNIX_EPOCH).unwrap_or_default();
+    CacheEntry {
+        file_size,
+        mtime_secs: duration_since_epoch.as_secs(),
+        mtime_nsecs: duration_since_epoch.subsec_nanos(),
+        is_empty: true,
+        preview_first: String::new(),
+        preview_last: String::new(),
+        full_text: String::new(),
+        search_text_lower: String::new(),
+        cwd: None,
+        message_count: 0,
+        parse_errors: Vec::new(),
+        summary: None,
+        custom_title: None,
+        model: None,
+        total_tokens: 0,
+        duration_minutes: None,
+        timestamp_epoch_ms: 0,
     }
 }
 
@@ -114,6 +158,7 @@ pub fn entry_from_conversation(
         file_size,
         mtime_secs: duration_since_epoch.as_secs(),
         mtime_nsecs: duration_since_epoch.subsec_nanos(),
+        is_empty: false,
         preview_first: conv.preview_first.clone(),
         preview_last: conv.preview_last.clone(),
         full_text: conv.full_text.clone(),
