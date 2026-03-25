@@ -7,9 +7,9 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
-# Run format, clippy-fix, and build in parallel
+# Run format, clippy, and build in parallel
 [parallel]
-check: format clippy-fix build
+check: format clippy build
 
 # Run check and fail if there are uncommitted changes (for CI)
 check-ci: check
@@ -26,13 +26,9 @@ check-ci: check
 format:
     @cargo fmt --all
 
-# Run clippy with all warnings
+# Auto-fix clippy warnings, then fail on any remaining
 clippy:
-    @cargo clippy --quiet -- -W clippy::all 2>&1 | { grep -v "^0 errors" || true; }
-
-# Auto-fix clippy warnings
-clippy-fix:
-    @cargo clippy --fix --allow-dirty --quiet -- -W clippy::all 2>&1 | { grep -v "^0 errors" || true; }
+    @cargo clippy --fix --allow-dirty --quiet -- -D clippy::all 2>&1 | { grep -v "^0 errors" || true; }
 
 # Build the project
 build:
