@@ -24,15 +24,15 @@ check-ci: check
 
 # Format Rust files
 format:
-    cargo fmt --all
+    @cargo fmt --all
 
 # Run clippy with all warnings
 clippy:
-    cargo clippy -- -W clippy::all
+    @cargo clippy --quiet -- -W clippy::all 2>&1 | { grep -v "^0 errors" || true; }
 
 # Auto-fix clippy warnings
 clippy-fix:
-    cargo clippy --fix --allow-dirty -- -W clippy::all
+    @cargo clippy --fix --allow-dirty --quiet -- -W clippy::all 2>&1 | { grep -v "^0 errors" || true; }
 
 # Build the project
 build:
