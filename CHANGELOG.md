@@ -1,3 +1,7 @@
+## v0.1.50 (2026-03-27)
+
+- Pressing Esc now clears the search input first — a second Esc quits the app
+
 ## v0.1.49 (2026-03-24)
 
 - Faster startup with per-project binary caching of parsed conversations — only
