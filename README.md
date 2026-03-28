@@ -2,7 +2,8 @@
 
 <img src="/meta/screenshot.webp" />
 
-> _"This is the best thing ever thanks for this project."_ — [@andrewle8](https://github.com/andrewle8)
+> _"This is the best thing ever thanks for this project."_ —
+> [@andrewle8](https://github.com/andrewle8)
 
 `claude-history` is a companion CLI for Claude Code. It lets you search recent
 conversations recorded in Claude's local project history with a built-in
@@ -12,8 +13,23 @@ scrolling, search, and export capabilities.
 Run it from the project directory you work on with Claude Code and it will
 discover the matching transcript folder automatically.
 
-[Install](#install) · [Usage](#usage) · [Configuration](#configuration) ·
-[Changelog](CHANGELOG.md)
+[Install](#install) · [Features](#features) · [Usage](#usage) ·
+[Configuration](#configuration) · [Changelog](CHANGELOG.md)
+
+## Features
+
+- **Fuzzy search** across all conversations with prefix matching, word boundary
+  awareness, and tool output indexing
+- **Conversation viewer** with vim-style scrolling, in-viewer search, message
+  navigation, and markdown rendering
+- **Resume and fork** conversations directly from the TUI with configurable
+  keybindings
+- **Cross-project fork** — fork a conversation from any project into your
+  current working directory, useful when working across git worktrees
+- **Worktree-aware** project filtering for
+  [workmux](https://github.com/raine/workmux) users
+- **Export and copy** conversations or individual messages to clipboard
+- **Configurable** display options, keybindings, and default resume arguments
 
 ## Install
 
@@ -322,8 +338,8 @@ folder name. The project filter (toggled with `Tab`) is worktree-aware: it
 includes conversations from the main repo and all its worktrees, regardless of
 which one you're currently in.
 
-The `--resume` flag works across projects. It will automatically run Claude
-in the correct project directory for the selected conversation.
+The `--resume` flag works across projects. It will automatically run Claude in
+the correct project directory for the selected conversation.
 
 ### Integration with other scripts
 
