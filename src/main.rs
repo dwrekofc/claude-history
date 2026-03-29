@@ -137,6 +137,102 @@ fn run() -> Result<()> {
         }
     }
 
+    // Handle --debug-search flag: debug search result scoring
+    if let Some(ref query) = args.debug_search {
+        let mut conversations = history::load_all_conversations(show_last, args.debug)?;
+        conversations.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+        let searchable = tui::search::precompute_search_text(&conversations);
+        let now = chrono::Local::now();
+
+        let query_lower = tui::search::normalize_for_search(query);
+        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+        let adjacent_pairs: Vec<String> = if query_words.len() > 1 {
+            query_words
+                .windows(2)
+                .map(|w| format!("{} {}", w[0], w[1]))
+                .collect()
+        } else {
+            vec![]
+        };
+
+        // Optionally filter to local workspace
+        let current_project_dir_name = if args.local {
+            std::env::current_dir()
+                .ok()
+                .map(|d| history::convert_path_to_project_dir_name(&d))
+        } else {
+            None
+        };
+
+        let mut results: Vec<_> = searchable
+            .iter()
+            .filter_map(|s| {
+                if let Some(ref proj) = current_project_dir_name {
+                    let conv = &conversations[s.index];
+                    let matches =
+                        conv.path
+                            .parent()
+                            .and_then(|p| p.file_name())
+                            .is_some_and(|name| {
+                                history::is_same_project(&name.to_string_lossy(), proj)
+                            });
+                    if !matches {
+                        return None;
+                    }
+                }
+
+                let debug = tui::search::score_text_debug(
+                    s,
+                    &conversations[s.index].search_text_lower,
+                    &query_words,
+                    &adjacent_pairs,
+                    conversations[s.index].timestamp,
+                    now,
+                )?;
+                Some((s.index, debug))
+            })
+            .collect();
+
+        results.sort_by(|a, b| {
+            b.1.total
+                .partial_cmp(&a.1.total)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        for (rank, (idx, debug)) in results.iter().take(30).enumerate() {
+            let conv = &conversations[*idx];
+            let age = now.signed_duration_since(conv.timestamp);
+            let project = conv.project_name.as_deref().unwrap_or("(none)");
+            let age_str = format_debug_age(age);
+            eprintln!(
+                "#{:2} score={:.2} freshness={:.2} | {} | {} ago",
+                rank + 1,
+                debug.total,
+                debug.freshness,
+                project,
+                age_str
+            );
+
+            for field in &debug.fields {
+                if field.tf_score > 0.0 || field.adjacency_score > 0.0 {
+                    eprintln!(
+                        "     {}: tf={:.2} adj={:.2} (w={:.1})",
+                        field.name, field.tf_score, field.adjacency_score, field.weight
+                    );
+                    for (word, tf, ln_score) in &field.word_details {
+                        if *tf > 0 {
+                            eprintln!("       \"{}\" tf={} ln={:.2}", word, tf, ln_score);
+                        }
+                    }
+                }
+            }
+            eprintln!();
+        }
+
+        return Ok(());
+    }
+
     // Handle --render flag: render a JSONL file in ledger format and exit
     if let Some(ref render_path) = args.render {
         let display_options = display::DisplayOptions {
@@ -414,6 +510,15 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn format_debug_age(age: chrono::Duration) -> String {
+    let hours = age.num_hours();
+    if hours < 24 {
+        format!("{}h", hours)
+    } else {
+        format!("{}d", hours / 24)
+    }
 }
 
 #[cfg(unix)]

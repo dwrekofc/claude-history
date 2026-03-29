@@ -162,6 +162,15 @@ pub struct Args {
     )]
     pub delete: Option<String>,
 
+    /// Debug search scoring for a query
+    #[arg(
+        long = "debug-search",
+        value_name = "QUERY",
+        help = "Debug search result scoring for a query",
+        conflicts_with_all = ["show_dir", "resume", "show_path", "show_id", "plain", "render", "delete", "input_file"]
+    )]
+    pub debug_search: Option<String>,
+
     /// Input JSONL file to view directly (skips conversation selection)
     #[arg(
         value_name = "FILE",

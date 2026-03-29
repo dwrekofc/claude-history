@@ -5,8 +5,14 @@ use rayon::prelude::*;
 /// Precomputed search data for a conversation
 #[derive(Clone)]
 pub struct SearchableConversation {
-    /// Lowercased full text for searching
+    /// Combined text for Stage 1 fast rejection (search_text_lower + project name)
     pub text_lower: String,
+    /// Normalized custom_title only (small, typically <100 chars)
+    pub title_lower: String,
+    /// Normalized summary only (small, typically <500 chars)
+    pub summary_lower: String,
+    /// Normalized project_name only (small, typically <50 chars)
+    pub project_lower: String,
     /// Original conversation index
     pub index: usize,
 }
@@ -95,13 +101,34 @@ pub fn precompute_search_text(conversations: &[Conversation]) -> Vec<SearchableC
         .par_iter()
         .enumerate()
         .map(|(idx, conv)| {
-            let text_lower = if let Some(ref name) = conv.project_name {
-                format!("{} {}", conv.search_text_lower, normalize_for_search(name))
-            } else {
+            let title_lower = conv
+                .custom_title
+                .as_ref()
+                .map(|t| normalize_for_search(t))
+                .unwrap_or_default();
+            let summary_lower = conv
+                .summary
+                .as_ref()
+                .map(|s| normalize_for_search(s))
+                .unwrap_or_default();
+            let project_lower = conv
+                .project_name
+                .as_ref()
+                .map(|n| normalize_for_search(n))
+                .unwrap_or_default();
+
+            // Combined for Stage 1: same as before, just append project name
+            let text_lower = if project_lower.is_empty() {
                 conv.search_text_lower.clone()
+            } else {
+                format!("{} {}", conv.search_text_lower, project_lower)
             };
+
             SearchableConversation {
                 text_lower,
+                title_lower,
+                summary_lower,
+                project_lower,
                 index: idx,
             }
         })
@@ -128,13 +155,25 @@ pub fn search(
         return (0..conversations.len()).collect();
     }
 
+    // Precompute adjacent pairs once per query (not per conversation)
+    let adjacent_pairs: Vec<String> = if query_words.len() > 1 {
+        query_words
+            .windows(2)
+            .map(|w| format!("{} {}", w[0], w[1]))
+            .collect()
+    } else {
+        vec![]
+    };
+
     // Score all conversations in parallel
     let mut scored: Vec<(usize, f64, DateTime<Local>)> = searchable
         .par_iter()
         .filter_map(|s| {
             let score = score_text(
-                &s.text_lower,
+                s,
+                &conversations[s.index].search_text_lower,
                 &query_words,
+                &adjacent_pairs,
                 conversations[s.index].timestamp,
                 now,
             );
@@ -156,100 +195,209 @@ pub fn search(
     scored.into_iter().map(|(idx, _, _)| idx).collect()
 }
 
-/// Score a conversation based on word prefix matching and recency.
-/// Each query word must be a prefix of at least one word in the text (AND logic).
-/// Falls back to substring matching when prefix matching fails (e.g. for CJK text).
+/// Field weights for scoring
+const WEIGHT_TITLE: f64 = 5.0;
+const WEIGHT_SUMMARY: f64 = 3.0;
+const WEIGHT_PROJECT: f64 = 4.0;
+const WEIGHT_BODY: f64 = 1.0;
+
+/// Debug breakdown of a search score
+pub struct ScoreDebug {
+    pub total: f64,
+    pub freshness: f64,
+    pub fields: Vec<FieldDebug>,
+}
+
+pub struct FieldDebug {
+    pub name: &'static str,
+    pub weight: f64,
+    pub tf_score: f64,
+    pub adjacency_score: f64,
+    /// Per query-word: (word, tf_count, ln_score)
+    pub word_details: Vec<(String, usize, f64)>,
+}
+
+/// Core scoring implementation used by both score_text and score_text_debug.
 ///
-/// Uses `find()` + word boundary check instead of `split_whitespace()` iteration
-/// so that search time scales with the number of matches, not the number of words
-/// in the text. This keeps interactive search fast even on multi-MB conversations.
-fn score_text(
-    text_lower: &str,
+/// Stage 1: Fast rejection using combined text (AND logic, prefix matching).
+/// Stage 2: Per-field scoring with log-saturated TF, adjacency bonuses, field weights.
+/// Returns None if Stage 1 rejects the conversation.
+fn score_impl(
+    s: &SearchableConversation,
+    body_lower: &str,
     query_words: &[&str],
+    adjacent_pairs: &[String],
+    timestamp: DateTime<Local>,
+    now: DateTime<Local>,
+) -> Option<ScoreDebug> {
+    if query_words.is_empty() {
+        return None;
+    }
+
+    // Stage 1: Fast rejection — all query words must exist as substrings
+    for &qw in query_words {
+        if !s.text_lower.contains(qw) {
+            return None;
+        }
+    }
+
+    // Stage 1: Prefix matching on combined text (AND logic).
+    // If any word has 0 prefix matches in text_lower, reject.
+    for &qw in query_words {
+        if count_prefix_matches(&s.text_lower, qw, 1) == 0 {
+            // CJK fallback: substring matching is acceptable for CJK text
+            let has_cjk = query_words
+                .iter()
+                .any(|w| w.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c)));
+            if has_cjk {
+                let fresh = freshness_bonus(timestamp, now);
+                let flat = (query_words.len() as f64) * 0.5;
+                return Some(ScoreDebug {
+                    total: flat + fresh,
+                    freshness: fresh,
+                    fields: vec![],
+                });
+            }
+            return None;
+        }
+    }
+
+    // Stage 2: Field-aware scoring
+    let fields: &[(&str, f64, &'static str)] = &[
+        (&s.title_lower, WEIGHT_TITLE, "title"),
+        (&s.summary_lower, WEIGHT_SUMMARY, "summary"),
+        (&s.project_lower, WEIGHT_PROJECT, "project"),
+        (body_lower, WEIGHT_BODY, "body"),
+    ];
+
+    let mut base_score = 0.0;
+    let mut field_debugs = Vec::new();
+
+    for &(field, weight, name) in fields {
+        if field.is_empty() {
+            continue;
+        }
+
+        // Per-word log-saturated TF
+        let mut field_tf_score = 0.0;
+        let mut word_details = Vec::new();
+        for &qw in query_words {
+            let tf = count_prefix_matches(field, qw, 10); // cap at 10
+            let ln_score = if tf > 0 { ((1 + tf) as f64).ln() } else { 0.0 };
+            field_tf_score += ln_score;
+            word_details.push((qw.to_string(), tf, ln_score));
+        }
+        let weighted_tf = weight * field_tf_score;
+        base_score += weighted_tf;
+
+        // Adjacency bonus using precomputed pairs
+        let adj_count = if !adjacent_pairs.is_empty() {
+            count_adjacent_pairs(field, adjacent_pairs, 3)
+        } else {
+            0
+        };
+        let weighted_adj = weight * 2.0 * adj_count as f64;
+        base_score += weighted_adj;
+
+        field_debugs.push(FieldDebug {
+            name,
+            weight,
+            tf_score: weighted_tf,
+            adjacency_score: weighted_adj,
+            word_details,
+        });
+    }
+
+    let fresh = freshness_bonus(timestamp, now);
+
+    Some(ScoreDebug {
+        total: base_score + fresh,
+        freshness: fresh,
+        fields: field_debugs,
+    })
+}
+
+/// Score a conversation. Returns 0.0 if not matched.
+/// Thin wrapper around score_impl.
+fn score_text(
+    s: &SearchableConversation,
+    body_lower: &str,
+    query_words: &[&str],
+    adjacent_pairs: &[String],
     timestamp: DateTime<Local>,
     now: DateTime<Local>,
 ) -> f64 {
-    if query_words.is_empty() {
-        return 0.0;
-    }
+    score_impl(s, body_lower, query_words, adjacent_pairs, timestamp, now).map_or(0.0, |d| d.total)
+}
 
-    // Fast rejection: if a query word isn't present as substring, skip expensive checking
-    for &qw in query_words {
-        if !text_lower.contains(qw) {
-            return 0.0;
+/// Score with full debug breakdown. Returns None if Stage 1 rejects.
+pub fn score_text_debug(
+    s: &SearchableConversation,
+    body_lower: &str,
+    query_words: &[&str],
+    adjacent_pairs: &[String],
+    timestamp: DateTime<Local>,
+    now: DateTime<Local>,
+) -> Option<ScoreDebug> {
+    score_impl(s, body_lower, query_words, adjacent_pairs, timestamp, now)
+}
+
+/// Count prefix matches of `word` in `text`, up to `max_count`.
+fn count_prefix_matches(text: &str, word: &str, max_count: usize) -> usize {
+    let mut start = 0;
+    let mut count = 0;
+    while let Some(pos) = text[start..].find(word) {
+        let actual_pos = start + pos;
+        let at_boundary = actual_pos == 0
+            || text[..actual_pos]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_whitespace());
+        if at_boundary {
+            count += 1;
+            if count >= max_count {
+                break;
+            }
         }
+        start = actual_pos + word.len().max(1);
     }
+    count
+}
 
-    // For each query word, find it at a word boundary (prefix match).
-    // Uses find() which is backed by SIMD-accelerated memchr in Rust's std.
-    let mut all_prefix_matched = true;
-
-    for &qw in query_words {
+/// Count how many precomputed adjacent pairs appear in text.
+/// Returns count capped at `max_count`.
+fn count_adjacent_pairs(text: &str, adjacent_pairs: &[String], max_count: usize) -> usize {
+    let mut count = 0;
+    for combined in adjacent_pairs {
         let mut start = 0;
-        let mut found = false;
-
-        while let Some(pos) = text_lower[start..].find(qw) {
+        while let Some(pos) = text[start..].find(combined.as_str()) {
             let actual_pos = start + pos;
-
-            // Check word boundary: start of string or preceded by whitespace.
-            // Uses char-level check to handle Unicode whitespace correctly.
             let at_boundary = actual_pos == 0
-                || text_lower[..actual_pos]
+                || text[..actual_pos]
                     .chars()
                     .next_back()
                     .is_some_and(|c| c.is_whitespace());
-
             if at_boundary {
-                found = true;
-                break;
+                count += 1;
+                if count >= max_count {
+                    return count;
+                }
             }
-            // Advance past the matched substring (actual_pos + qw.len() is always
-            // a valid char boundary since find() matched valid UTF-8 at actual_pos)
-            start = actual_pos + qw.len().max(1);
-        }
-
-        if !found {
-            all_prefix_matched = false;
-            break;
+            start = actual_pos + combined.len().max(1);
         }
     }
-
-    if all_prefix_matched {
-        return (query_words.len() as f64) * recency_multiplier(timestamp, now);
-    }
-
-    // Fallback: substring matching for CJK text.
-    // Only apply when at least one query word contains CJK ideographs, since CJK text
-    // lacks whitespace word boundaries and substring matching is the appropriate strategy.
-    // Without this guard, Latin queries like "ime" would incorrectly match "runtime".
-    let has_cjk = query_words
-        .iter()
-        .any(|w| w.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c)));
-    if has_cjk {
-        return (query_words.len() as f64) * 0.5 * recency_multiplier(timestamp, now);
-    }
-
-    0.0
+    count
 }
 
-/// Calculate recency multiplier based on age
-fn recency_multiplier(timestamp: DateTime<Local>, now: DateTime<Local>) -> f64 {
+/// Additive freshness bonus with continuous exponential decay.
+/// Max bonus: 2.0 (brand new), half-life: 7 days.
+fn freshness_bonus(timestamp: DateTime<Local>, now: DateTime<Local>) -> f64 {
     let age = now.signed_duration_since(timestamp);
-
-    // Handle future timestamps (shouldn't happen, but be safe)
     if age < Duration::zero() {
-        return 3.0;
+        return 2.0; // future timestamp edge case
     }
-
-    if age < Duration::days(1) {
-        3.0
-    } else if age < Duration::days(7) {
-        2.0
-    } else if age < Duration::days(30) {
-        1.5
-    } else {
-        1.0
-    }
+    let age_days = age.num_seconds() as f64 / 86_400.0;
+    2.0 * 2_f64.powf(-age_days / 7.0)
 }
 
 #[cfg(test)]
@@ -258,7 +406,25 @@ mod tests {
     use crate::history::Conversation;
     use std::path::PathBuf;
 
-    fn make_conv(text: &str, timestamp: DateTime<Local>) -> Conversation {
+    /// Create a test conversation with optional metadata.
+    /// Rebuilds search_text_lower to match production behavior:
+    /// custom_title + summary are prepended to body text before normalization.
+    fn make_conv_full(
+        text: &str,
+        project: Option<&str>,
+        title: Option<&str>,
+        summary: Option<&str>,
+        timestamp: DateTime<Local>,
+    ) -> Conversation {
+        // Match production: prepend summary and title to full_text
+        let mut full_text = text.to_string();
+        if let Some(s) = summary {
+            full_text = format!("{} {}", s, full_text);
+        }
+        if let Some(t) = title {
+            full_text = format!("{} {}", t, full_text);
+        }
+
         Conversation {
             path: PathBuf::new(),
             index: 0,
@@ -266,19 +432,31 @@ mod tests {
             preview: text.to_string(),
             preview_first: text.to_string(),
             preview_last: text.to_string(),
-            full_text: text.to_string(),
-            search_text_lower: normalize_for_search(text),
-            project_name: None,
+            full_text: full_text.clone(),
+            search_text_lower: normalize_for_search(&full_text),
+            project_name: project.map(|s| s.to_string()),
             project_path: None,
             cwd: None,
             message_count: 1,
             parse_errors: vec![],
-            summary: None,
-            custom_title: None,
+            summary: summary.map(|s| s.to_string()),
+            custom_title: title.map(|s| s.to_string()),
             model: None,
             total_tokens: 0,
             duration_minutes: None,
         }
+    }
+
+    fn make_conv(text: &str, timestamp: DateTime<Local>) -> Conversation {
+        make_conv_full(text, None, None, None, timestamp)
+    }
+
+    fn make_conv_with_project(
+        text: &str,
+        project: &str,
+        timestamp: DateTime<Local>,
+    ) -> Conversation {
+        make_conv_full(text, Some(project), None, None, timestamp)
     }
 
     #[test]
@@ -328,48 +506,42 @@ mod tests {
     }
 
     #[test]
-    fn recency_today_gets_highest_multiplier() {
+    fn freshness_decays_over_time() {
         let now = Local::now();
-        let timestamp = now - Duration::hours(1);
-        assert_eq!(recency_multiplier(timestamp, now), 3.0);
+        let fresh = freshness_bonus(now - Duration::hours(1), now);
+        let week_old = freshness_bonus(now - Duration::days(7), now);
+        let month_old = freshness_bonus(now - Duration::days(30), now);
+        assert!(fresh > week_old, "fresh should score higher than week-old");
+        assert!(
+            week_old > month_old,
+            "week-old should score higher than month-old"
+        );
+        assert!(fresh <= 2.0, "freshness bonus should not exceed 2.0");
+        assert!(
+            month_old > 0.0,
+            "old conversations should still get some bonus"
+        );
     }
 
     #[test]
-    fn recency_this_week_gets_medium_multiplier() {
-        let now = Local::now();
-        let timestamp = now - Duration::days(3);
-        assert_eq!(recency_multiplier(timestamp, now), 2.0);
-    }
-
-    #[test]
-    fn recency_this_month_gets_low_multiplier() {
-        let now = Local::now();
-        let timestamp = now - Duration::days(15);
-        assert_eq!(recency_multiplier(timestamp, now), 1.5);
-    }
-
-    #[test]
-    fn recency_older_gets_base_multiplier() {
-        let now = Local::now();
-        let timestamp = now - Duration::days(60);
-        assert_eq!(recency_multiplier(timestamp, now), 1.0);
-    }
-
-    #[test]
-    fn future_timestamp_gets_highest_multiplier() {
+    fn future_timestamp_gets_max_freshness() {
         let now = Local::now();
         let timestamp = now + Duration::hours(1);
-        assert_eq!(recency_multiplier(timestamp, now), 3.0);
+        assert_eq!(freshness_bonus(timestamp, now), 2.0);
     }
 
-    fn make_conv_with_project(
-        text: &str,
-        project: &str,
-        timestamp: DateTime<Local>,
-    ) -> Conversation {
-        let mut conv = make_conv(text, timestamp);
-        conv.project_name = Some(project.to_string());
-        conv
+    #[test]
+    fn continuous_freshness_no_cliff() {
+        let now = Local::now();
+        let score_23h = freshness_bonus(now - Duration::hours(23), now);
+        let score_25h = freshness_bonus(now - Duration::hours(25), now);
+        let diff = (score_23h - score_25h).abs();
+        assert!(
+            diff < 0.1,
+            "no dramatic cliff at 24h boundary: 23h={:.3} 25h={:.3}",
+            score_23h,
+            score_25h
+        );
     }
 
     #[test]
@@ -472,5 +644,110 @@ mod tests {
             normalize_for_search("\u{884C}\u{4E3A}\u{3002}\u{5F53}\u{524D}"),
             "\u{884C}\u{4E3A} \u{5F53}\u{524D}"
         );
+    }
+
+    #[test]
+    fn exact_project_match_beats_recent_body_mention() {
+        let now = Local::now();
+        let old_exact = make_conv_full(
+            "discussion about agents config",
+            Some("workmux/agents-config"),
+            None,
+            None,
+            now - Duration::hours(22),
+        );
+        let new_incidental = make_conv_full(
+            "updated agents and changed config files",
+            Some("workmux/other-project"),
+            None,
+            None,
+            now - Duration::hours(1),
+        );
+        let convs = vec![old_exact, new_incidental];
+        let searchable = precompute_search_text(&convs);
+        let results = search(&convs, &searchable, "agents-config", now);
+        assert_eq!(results[0], 0, "exact project match should rank first");
+    }
+
+    #[test]
+    fn title_match_beats_body_only() {
+        let now = Local::now();
+        let with_title = make_conv_full(
+            "some body text about agents and config",
+            None,
+            Some("agents config setup"),
+            None,
+            now,
+        );
+        let body_only = make_conv_full(
+            "discussed agents and config in detail agents config agents",
+            None,
+            None,
+            None,
+            now,
+        );
+        let convs = vec![with_title, body_only];
+        let searchable = precompute_search_text(&convs);
+        let results = search(&convs, &searchable, "agents config", now);
+        assert_eq!(results[0], 0, "title match should rank higher");
+    }
+
+    #[test]
+    fn repeated_term_beats_single_mention() {
+        let now = Local::now();
+        let repeated = make_conv_full(
+            "config config config setup config again",
+            None,
+            None,
+            None,
+            now,
+        );
+        let single = make_conv_full("config was mentioned once here", None, None, None, now);
+        let convs = vec![repeated, single];
+        let searchable = precompute_search_text(&convs);
+        let results = search(&convs, &searchable, "config", now);
+        assert_eq!(results[0], 0, "repeated mentions should score higher");
+    }
+
+    #[test]
+    fn adjacent_terms_beat_separated() {
+        let now = Local::now();
+        let adjacent = make_conv_full("the agents config is important", None, None, None, now);
+        let separated = make_conv_full(
+            "the agents did something and later we changed config",
+            None,
+            None,
+            None,
+            now,
+        );
+        let convs = vec![adjacent, separated];
+        let searchable = precompute_search_text(&convs);
+        let results = search(&convs, &searchable, "agents config", now);
+        assert_eq!(results[0], 0, "adjacent terms should score higher");
+    }
+
+    #[test]
+    fn freshness_does_not_overpower_relevance() {
+        let now = Local::now();
+        // Old but highly relevant (project name match + body mentions)
+        let old_relevant = make_conv_full(
+            "agents config agents config agents config",
+            Some("workmux/agents-config"),
+            Some("agents config"),
+            None,
+            now - Duration::days(7),
+        );
+        // Brand new but barely relevant (single mention in body only)
+        let new_weak = make_conv_full(
+            "something about config in passing",
+            Some("workmux/unrelated"),
+            None,
+            None,
+            now - Duration::minutes(5),
+        );
+        let convs = vec![old_relevant, new_weak];
+        let searchable = precompute_search_text(&convs);
+        let results = search(&convs, &searchable, "agents config", now);
+        assert_eq!(results[0], 0, "strong relevance should beat freshness");
     }
 }

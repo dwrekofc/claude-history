@@ -18,8 +18,8 @@ discover the matching transcript folder automatically.
 
 ## Features
 
-- **Fuzzy search** across all conversations with prefix matching, word boundary
-  awareness, and tool output indexing
+- **Fuzzy search** across all conversations with field-aware relevance scoring,
+  prefix matching, word boundary awareness, and tool output indexing
 - **Conversation viewer** with vim-style scrolling, in-viewer search, message
   navigation, and markdown rendering
 - **Resume and fork** conversations directly from the TUI with configurable
@@ -154,7 +154,9 @@ Search uses fuzzy word matching with the following features:
   `e7d318b1-4274-4ee2-a341-e94893b5df49`) to jump directly to that session, even
   if it belongs to a different project
 
-Results are ranked by recency, so recent conversations appear first.
+Results are ranked by relevance using field-aware scoring: matches in the
+title, project name, and summary are weighted higher than body text. Within
+equally relevant results, recent conversations rank first.
 
 ### Direct file input
 
@@ -217,6 +219,7 @@ Options:
   -i, --show-id          Print the selected conversation session ID
       --plain            Output plain text without ledger formatting
       --delete <SESSION_ID>  Delete a session by its UUID and exit
+      --debug-search <QUERY>  Debug search result scoring for a query
       --debug [<LEVEL>]  Print debug information (optionally filter by level: debug, info, warn, error)
   -L, --local            Show only conversations from the current workspace directory
       --pager            Display output through a pager (less)
