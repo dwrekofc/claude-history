@@ -1,3 +1,11 @@
+## v0.1.51 (2026-03-29)
+
+- Improved search ranking — results now score matches by where they appear
+  (title, project, summary, or message body), so exact project and title matches
+  rank above incidental mentions in conversation text
+- Search freshness scoring uses smooth decay instead of sharp cutoffs, giving
+  more natural ranking between recent and older conversations
+
 ## v0.1.50 (2026-03-27)
 
 - Pressing Esc now clears the search input first — a second Esc quits the app
