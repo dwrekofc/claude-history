@@ -492,3 +492,5 @@ This runs `cargo fmt`, `cargo clippy --fix`, and `cargo build` in parallel.
   lets Claude Code consult stronger AI models (o3, Gemini, GPT-5.1 Codex)
 - [tmux-file-picker](https://github.com/raine/tmux-file-picker) — Pop up fzf in
   tmux to quickly insert file paths, perfect for AI coding assistants
+- [tmux-agent-usage](https://github.com/raine/tmux-agent-usage) — Display AI agent
+  rate limit usage in your tmux status bar
