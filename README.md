@@ -463,6 +463,12 @@ Each display option has opposing flags for explicit override:
 For example, if your config has `no_tools = false` (showing tools), you can
 temporarily hide them with `--no-tools`.
 
+## Custom Claude config directory
+
+If you use the `CLAUDE_CONFIG_DIR` environment variable to store Claude's
+configuration in a non-default location, `claude-history` will respect it
+automatically — no extra flags needed.
+
 ## Filtering details
 
 The tool filters out some noisy artifacts before showing conversations, so you
