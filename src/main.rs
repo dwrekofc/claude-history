@@ -205,12 +205,18 @@ fn run() -> Result<()> {
             let age = now.signed_duration_since(conv.timestamp);
             let project = conv.project_name.as_deref().unwrap_or("(none)");
             let age_str = format_debug_age(age);
+            let session = conv
+                .path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?");
             eprintln!(
-                "#{:2} score={:.2} freshness={:.2} | {} | {} ago",
+                "#{:2} score={:.2} freshness={:.2} | {} | {} | {} ago",
                 rank + 1,
                 debug.total,
                 debug.freshness,
                 project,
+                session,
                 age_str
             );
 
