@@ -342,18 +342,25 @@ pub fn score_text_debug(
     score_impl(s, body_lower, query_words, adjacent_pairs, timestamp, now)
 }
 
+/// Returns true if `pos` in `text` is at the start of a word (i.e. preceded by
+/// a non-alphanumeric character or is the start of the string). This treats
+/// markdown punctuation (`*`, `(`, `:`, `.`, etc.) as word boundaries, so a
+/// phrase like `**media pipeline**` is matched the same as `media pipeline`.
+fn is_word_start(text: &str, pos: usize) -> bool {
+    pos == 0
+        || text[..pos]
+            .chars()
+            .next_back()
+            .is_some_and(|c| !c.is_alphanumeric())
+}
+
 /// Count prefix matches of `word` in `text`, up to `max_count`.
 fn count_prefix_matches(text: &str, word: &str, max_count: usize) -> usize {
     let mut start = 0;
     let mut count = 0;
     while let Some(pos) = text[start..].find(word) {
         let actual_pos = start + pos;
-        let at_boundary = actual_pos == 0
-            || text[..actual_pos]
-                .chars()
-                .next_back()
-                .is_some_and(|c| c.is_whitespace());
-        if at_boundary {
+        if is_word_start(text, actual_pos) {
             count += 1;
             if count >= max_count {
                 break;
@@ -372,12 +379,7 @@ fn count_adjacent_pairs(text: &str, adjacent_pairs: &[String], max_count: usize)
         let mut start = 0;
         while let Some(pos) = text[start..].find(combined.as_str()) {
             let actual_pos = start + pos;
-            let at_boundary = actual_pos == 0
-                || text[..actual_pos]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|c| c.is_whitespace());
-            if at_boundary {
+            if is_word_start(text, actual_pos) {
                 count += 1;
                 if count >= max_count {
                     return count;
@@ -724,6 +726,44 @@ mod tests {
         let searchable = precompute_search_text(&convs);
         let results = search(&convs, &searchable, "agents config", now);
         assert_eq!(results[0], 0, "adjacent terms should score higher");
+    }
+
+    #[test]
+    fn adjacency_detected_inside_markdown_bold() {
+        // Markdown punctuation (`*`, parens, dots) should be treated as a
+        // word boundary for both prefix matching and adjacency detection,
+        // so `**media pipeline**` scores the same as `media pipeline`.
+        let now = Local::now();
+        let bolded = make_conv_full("the **media pipeline** is the gap.", None, None, None, now);
+        let plain_separated = make_conv_full(
+            "media is mentioned. then later pipeline is mentioned separately.",
+            None,
+            None,
+            None,
+            now,
+        );
+        let convs = vec![bolded, plain_separated];
+        let searchable = precompute_search_text(&convs);
+        let results = search(&convs, &searchable, "media pipeline", now);
+        assert_eq!(
+            results[0], 0,
+            "adjacency in **media pipeline** must beat distant terms"
+        );
+    }
+
+    #[test]
+    fn prefix_match_after_markdown_punctuation() {
+        // Word starting after `*`, `(`, `:` etc. should still count toward
+        // prefix matches — they're word boundaries, not just whitespace.
+        let now = Local::now();
+        let convs = vec![make_conv("look at *media* and (pipeline) and `media`", now)];
+        let searchable = precompute_search_text(&convs);
+        let results = search(&convs, &searchable, "media pipeline", now);
+        assert_eq!(
+            results.len(),
+            1,
+            "media and pipeline after punctuation must match"
+        );
     }
 
     #[test]
