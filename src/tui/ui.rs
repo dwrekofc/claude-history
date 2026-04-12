@@ -1605,8 +1605,52 @@ fn build_match_segments(text: &str, query: &str, max_width: usize) -> String {
     result
 }
 
+/// One cluster of nearby term hits in `full_text`.
+#[derive(Clone, Debug)]
+struct HitCluster {
+    start: usize,
+    end: usize,
+    /// Bitmask of term indices appearing in this cluster.
+    unique_terms: u64,
+    /// Bitmask of *missing* term indices (terms not in preview) in this cluster.
+    missing_terms: u64,
+    /// Number of *real* adjacent pairs of distinct query terms — incremented
+    /// only when two distinct terms are separated by nothing but
+    /// non-alphanumeric characters (whitespace/punctuation). A literal phrase
+    /// like `audio generation` produces 1; `audio ... 40 chars ... generation`
+    /// produces 0.
+    adjacent_pairs: u32,
+    /// End byte of the most recently merged hit (for adjacency-gap checks).
+    last_hit_end: usize,
+    /// Term index of the most recently merged hit.
+    last_term_idx: usize,
+}
+
+impl HitCluster {
+    fn span(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+    fn unique_count(&self) -> u32 {
+        self.unique_terms.count_ones()
+    }
+    fn missing_count(&self) -> u32 {
+        self.missing_terms.count_ones()
+    }
+}
+
 /// Build a context string showing snippets around hidden matches in full_text.
-/// Hidden matches are those beyond what's visible in the preview.
+///
+/// Selection is cluster-based: collect every term hit in `full_text`, group
+/// nearby hits into clusters, then rank clusters by:
+///
+/// 1. how many *missing* (not-in-preview) terms they cover,
+/// 2. how many adjacent term pairs they contain (e.g. literal phrase match),
+/// 3. total unique-term coverage,
+/// 4. tighter span,
+/// 5. earlier position.
+///
+/// This makes the literal phrase `audio generation` win over a far-apart pair
+/// of `audio` + `generation` occurrences in unrelated boilerplate.
 /// Operates on raw full_text and sanitizes each extracted slice independently.
 fn build_context_segments(
     full_text: &str,
@@ -1618,56 +1662,161 @@ fn build_context_segments(
         return None;
     }
 
-    // Use lazy scanner to avoid allocating NormalizedText over large full_text strings.
-    // Prioritize showing terms NOT already visible in the preview.
-    // For each term, check if it has matches in the preview; if not,
-    // find its first match in full_text using the lazy scanner.
-    let terms: Vec<&str> = query.split_whitespace().collect();
-    let mut missing_term_matches: Vec<(usize, usize)> = Vec::new();
-
-    for term in &terms {
-        if find_first_normalized_match(preview, term).is_some() {
-            continue;
-        }
-        // Term not in preview — find first match in full_text lazily
-        if let Some(first) = find_first_normalized_match(full_text, term) {
-            missing_term_matches.push(first);
+    // Split into terms, dedupe (case-insensitive), and cap to 64 so we can
+    // use a u64 bitmask. Deduping prevents `audio audio generation` from
+    // double-counting `audio` in unique/missing/adjacency math.
+    let mut terms: Vec<&str> = Vec::new();
+    for tok in query.split_whitespace() {
+        if !terms.iter().any(|t: &&str| t.eq_ignore_ascii_case(tok)) {
+            terms.push(tok);
+            if terms.len() == 64 {
+                break;
+            }
         }
     }
-
-    // If all terms are already in preview, fall back to showing additional
-    // matches beyond what the preview covers (original behavior).
-    // Use consistent counting (both lazy scanner) to avoid merge mismatches.
-    let raw_hidden = if missing_term_matches.is_empty() {
-        let preview_match_count = find_all_normalized_matches(preview, &terms).len();
-        let all_matches = find_all_normalized_matches(full_text, &terms);
-        if all_matches.len() <= preview_match_count {
-            return None;
-        }
-        all_matches.into_iter().skip(preview_match_count).collect()
-    } else {
-        missing_term_matches
-    };
-
-    if raw_hidden.is_empty() {
+    if terms.is_empty() {
         return None;
     }
 
-    // Sort by position, cluster nearby matches (gap < 50 bytes)
-    let mut sorted = raw_hidden;
-    sorted.sort_unstable_by_key(|m| m.0);
-    let merge_gap = 50;
-    let mut hidden_matches: Vec<(usize, usize)> = Vec::new();
-    for m in sorted {
-        if let Some(last) = hidden_matches.last_mut()
-            && m.0 <= last.1 + merge_gap
-        {
-            last.1 = last.1.max(m.1);
-            continue;
+    // Determine which terms are NOT in the visible preview. Snippet should
+    // surface those first so the context line complements the preview line.
+    let mut missing_mask: u64 = 0;
+    let mut missing_count = 0u32;
+    for (i, term) in terms.iter().enumerate() {
+        if find_first_normalized_match(preview, term).is_none() {
+            missing_mask |= 1 << i;
+            missing_count += 1;
         }
-        hidden_matches.push(m);
     }
-    hidden_matches.truncate(3); // cap at 3 clusters
+
+    // Collect every hit in full_text, tagged with which term matched.
+    let all_hits = find_all_term_hits(full_text, &terms);
+    if all_hits.is_empty() {
+        return None;
+    }
+
+    // Fallback: if every term is already visible in the preview, only emit a
+    // context line when full_text contains *more* hits than the preview does.
+    // We don't try to skip positionally — `preview` is sanitized/truncated and
+    // `full_text` is raw, so positional alignment between the two hit streams
+    // is unreliable. Instead we let the cluster ranker pick the most
+    // informative cluster across the whole document. Worst case it picks one
+    // that overlaps preview content, which is still the best snippet we have.
+    if missing_count == 0 {
+        let preview_hit_count = find_all_term_hits(preview, &terms).len();
+        if all_hits.len() <= preview_hit_count {
+            return None;
+        }
+    }
+
+    // Group nearby hits into clusters. Run the adjacency scan on the *full*
+    // hit set so phrases like `audio generation` are detected even when one
+    // of the words is already in the preview.
+    let merge_gap_bytes: usize = 50;
+    let max_cluster_span_bytes: usize = 200;
+
+    let mut clusters: Vec<HitCluster> = Vec::new();
+    for hit in &all_hits {
+        let term_bit: u64 = 1u64 << hit.term_idx;
+        let is_missing = (missing_mask & term_bit) != 0;
+
+        // Try to extend the previous cluster if we're close enough AND the
+        // resulting span stays within the max-cluster limit.
+        let mut extended = false;
+        if let Some(last) = clusters.last_mut() {
+            let close_enough = hit.start <= last.end.saturating_add(merge_gap_bytes);
+            let new_end = last.end.max(hit.end);
+            let new_span = new_end.saturating_sub(last.start);
+            if close_enough && new_span <= max_cluster_span_bytes {
+                // Real adjacency check: this hit counts as a phrase pair only
+                // if it's a *different* term than the previous hit and the
+                // gap text between them is purely non-alphanumeric (so
+                // `audio generation` and `**audio** generation` count, but
+                // `audio … 40 chars … generation` does not).
+                if hit.term_idx != last.last_term_idx && hit.start >= last.last_hit_end {
+                    let gap = &full_text[last.last_hit_end..hit.start];
+                    if !gap.is_empty() && gap.chars().all(|c| !c.is_alphanumeric()) {
+                        last.adjacent_pairs += 1;
+                    }
+                }
+
+                last.end = new_end;
+                last.unique_terms |= term_bit;
+                if is_missing {
+                    last.missing_terms |= term_bit;
+                }
+                last.last_hit_end = hit.end;
+                last.last_term_idx = hit.term_idx;
+                extended = true;
+            }
+        }
+
+        if !extended {
+            clusters.push(HitCluster {
+                start: hit.start,
+                end: hit.end,
+                unique_terms: term_bit,
+                missing_terms: if is_missing { term_bit } else { 0 },
+                adjacent_pairs: 0,
+                last_hit_end: hit.end,
+                last_term_idx: hit.term_idx,
+            });
+        }
+    }
+
+    // If any term was missing from the preview, drop clusters that contain
+    // only already-visible terms — they'd just duplicate the preview.
+    if missing_count > 0 {
+        clusters.retain(|c| c.missing_count() > 0);
+    }
+    if clusters.is_empty() {
+        return None;
+    }
+
+    // Score clusters: missing coverage > adjacency density > total coverage
+    // > tighter span > earlier position.
+    clusters.sort_unstable_by(|a, b| {
+        b.missing_count()
+            .cmp(&a.missing_count())
+            .then_with(|| b.adjacent_pairs.cmp(&a.adjacent_pairs))
+            .then_with(|| b.unique_count().cmp(&a.unique_count()))
+            .then_with(|| a.span().cmp(&b.span()))
+            .then_with(|| a.start.cmp(&b.start))
+    });
+
+    // Greedy selection: pass 1 picks clusters that cover *new* missing terms;
+    // pass 2 fills any remaining budget with the next-highest-quality clusters.
+    let max_clusters = 3usize;
+    let mut selected: Vec<HitCluster> = Vec::new();
+    let mut covered_missing: u64 = 0;
+
+    for c in &clusters {
+        if selected.len() >= max_clusters {
+            break;
+        }
+        let new_missing = c.missing_terms & !covered_missing;
+        if new_missing != 0 {
+            covered_missing |= c.missing_terms;
+            selected.push(c.clone());
+        }
+    }
+
+    for c in &clusters {
+        if selected.len() >= max_clusters {
+            break;
+        }
+        if !selected
+            .iter()
+            .any(|s| s.start == c.start && s.end == c.end)
+        {
+            selected.push(c.clone());
+        }
+    }
+
+    // Render in document order.
+    selected.sort_unstable_by_key(|c| c.start);
+    let hidden_matches: Vec<(usize, usize)> =
+        selected.into_iter().map(|c| (c.start, c.end)).collect();
 
     // For each hidden match cluster, extract a context window from raw full_text,
     // then sanitize just that slice
@@ -1842,11 +1991,21 @@ fn find_first_normalized_match(text: &str, term: &str) -> Option<(usize, usize)>
     None
 }
 
-/// Find all normalized matches for multiple terms in text, sorted by position.
+/// A single hit returned from `find_all_term_hits`. Carries which query term
+/// matched so callers can compute term-coverage / phrase-density per cluster.
+#[derive(Clone, Copy, Debug)]
+struct TermHit {
+    start: usize,
+    end: usize,
+    term_idx: usize,
+}
+
+/// Find all normalized matches for multiple terms in text, returning hits
+/// tagged with which term they matched. Sorted by start position.
 /// Uses lazy scanning — avoids building NormalizedText.
-fn find_all_normalized_matches(text: &str, terms: &[&str]) -> Vec<(usize, usize)> {
-    let mut all_matches = Vec::new();
-    for term in terms {
+fn find_all_term_hits(text: &str, terms: &[&str]) -> Vec<TermHit> {
+    let mut all_hits = Vec::new();
+    for (term_idx, term) in terms.iter().enumerate() {
         let term_chars: Vec<char> = term.chars().collect();
         if term_chars.is_empty() {
             continue;
@@ -1890,12 +2049,20 @@ fn find_all_normalized_matches(text: &str, terms: &[&str]) -> Vec<(usize, usize)
                 }
 
                 if matched {
-                    all_matches.push((byte_start, end_byte));
-                    // Skip past this match
+                    all_hits.push(TermHit {
+                        start: byte_start,
+                        end: end_byte,
+                        term_idx,
+                    });
+                    // Skip past this match. The next iteration's
+                    // `prev_is_alnum` should reflect the *last* matched char,
+                    // not be hardcoded — terms ending in punctuation (e.g.
+                    // `c++`, `audio.`) would otherwise wrongly reject the
+                    // following character as a non-word-start.
                     for _ in 0..term_chars.len().saturating_sub(1) {
                         iter.next();
                     }
-                    prev_is_alnum = true;
+                    prev_is_alnum = term_chars.last().is_some_and(|c| c.is_alphanumeric());
                     iter.next();
                     continue;
                 }
@@ -1905,8 +2072,8 @@ fn find_all_normalized_matches(text: &str, terms: &[&str]) -> Vec<(usize, usize)
             iter.next();
         }
     }
-    all_matches.sort_unstable_by_key(|m| m.0);
-    all_matches
+    all_hits.sort_unstable_by_key(|h| h.start);
+    all_hits
 }
 
 /// Pre-normalized text with char-to-byte mapping for efficient repeated searches.
@@ -2374,6 +2541,114 @@ mod tests {
     fn context_segments_empty_query() {
         let result = build_context_segments("some text", "some", "", 80);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn context_segments_prefers_adjacent_phrase_over_distant_terms() {
+        // "audio" and "generation" each appear early in unrelated boilerplate,
+        // and the literal phrase "audio generation" appears much later. The
+        // snippet must surface the phrase, not the early independent hits.
+        let mut full_text = String::new();
+        full_text.push_str("Card generation is supported. -field:Audio is a filter. ");
+        full_text.push_str(&"junk ".repeat(20));
+        full_text
+            .push_str("First-class audio generation (OpenAI TTS) and image support is missing. ");
+        full_text.push_str(&"junk ".repeat(20));
+        let preview = "Some unrelated preview line about deck workflow";
+        let result = build_context_segments(&full_text, preview, "audio generation", 120);
+        assert!(result.is_some());
+        let ctx = result.unwrap();
+        assert!(
+            ctx.contains("audio generation"),
+            "context should contain the literal phrase 'audio generation', got: {ctx}"
+        );
+    }
+
+    #[test]
+    fn context_segments_phrase_inside_markdown_bold() {
+        // The phrase appears inside `**...**` (markdown bold). Adjacency must
+        // still be detected — markdown punctuation is a word boundary.
+        let mut full_text = String::new();
+        full_text.push_str("audio is mentioned. generation is mentioned separately. ");
+        full_text.push_str(&"x ".repeat(30));
+        full_text.push_str("**Audio generation** is the actual recommendation here.");
+        let preview = "boring preview text";
+        let result = build_context_segments(&full_text, preview, "audio generation", 120);
+        assert!(result.is_some());
+        let ctx = result.unwrap();
+        let lower = ctx.to_lowercase();
+        assert!(
+            lower.contains("audio generation"),
+            "context should contain the phrase 'audio generation', got: {ctx}"
+        );
+    }
+
+    #[test]
+    fn context_segments_skips_clusters_only_covering_visible_terms() {
+        // "audio" is in the preview already. A standalone "audio" cluster
+        // should not be selected — the snippet should surface "generation"
+        // (the missing term), preferably alongside "audio" if a phrase exists.
+        let full_text = "audio first. then later generation alone. and finally audio generation together at the end.";
+        let preview = "audio first. then later";
+        let result = build_context_segments(full_text, preview, "audio generation", 120);
+        assert!(result.is_some());
+        let ctx = result.unwrap();
+        assert!(
+            ctx.contains("generation"),
+            "context should contain 'generation', got: {ctx}"
+        );
+    }
+
+    #[test]
+    fn context_segments_distant_terms_dont_count_as_adjacent() {
+        // Two clusters with the same unique_count, but only one has the
+        // terms actually adjacent. The adjacent one must win.
+        let mut full_text = String::new();
+        // Cluster A: alpha and beta with junk between (within merge_gap=50
+        // bytes but not adjacent — `aaaa` is alphanumeric in the gap).
+        full_text.push_str("alpha aaaa bbbb cccc dddd beta ");
+        full_text.push_str(&"x ".repeat(40));
+        // Cluster B: literal phrase
+        full_text.push_str("alpha beta together here");
+        let preview = "boring preview line";
+        let result = build_context_segments(&full_text, preview, "alpha beta", 100);
+        assert!(result.is_some());
+        let ctx = result.unwrap();
+        assert!(
+            ctx.contains("alpha beta together")
+                || ctx.ends_with("here")
+                || ctx.contains("beta together"),
+            "expected the literal phrase cluster to be selected, got: {ctx}"
+        );
+    }
+
+    #[test]
+    fn context_segments_dedupes_query_terms() {
+        // Repeated query terms must not inflate uniqueness/adjacency math.
+        let full_text = "alpha alpha and later beta the end";
+        let preview = "preview only";
+        let r1 = build_context_segments(full_text, preview, "alpha alpha beta", 80);
+        let r2 = build_context_segments(full_text, preview, "alpha beta", 80);
+        // Should produce the same context — duplicates are folded away.
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn context_segments_underscore_phrase_still_detected() {
+        // Underscores normalize to spaces, so `audio_generation` should be
+        // detected as the adjacent phrase `audio generation`.
+        let mut full_text = String::new();
+        full_text.push_str("audio early. generation early. ");
+        full_text.push_str(&"x ".repeat(30));
+        full_text.push_str("the relevant audio_generation pipeline lives here.");
+        let preview = "preview only";
+        let result = build_context_segments(&full_text, preview, "audio generation", 120);
+        assert!(result.is_some());
+        let ctx = result.unwrap();
+        assert!(
+            ctx.contains("audio_generation") || ctx.contains("audio generation"),
+            "context should contain the adjacent occurrence, got: {ctx}"
+        );
     }
 
     // --- word boundary tests ---
