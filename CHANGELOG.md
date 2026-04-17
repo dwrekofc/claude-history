@@ -1,3 +1,9 @@
+## v0.1.53 (2026-04-17)
+
+- Conversation viewer no longer jumps to unrelated content when toggling tool
+  output (`t`), thinking (`T`), or timing (`i`), or when resizing the terminal —
+  the viewport now stays anchored to the message you were reading
+
 ## v0.1.52 (2026-04-17)
 
 - Mouse wheel scrolling in both the search result list and conversation viewer,
