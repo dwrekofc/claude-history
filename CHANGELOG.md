@@ -1,3 +1,19 @@
+## v0.1.52 (2026-04-17)
+
+- Mouse wheel scrolling in both the search result list and conversation viewer
+  (note: enabling mouse capture may interfere with click-drag text selection in
+  some terminals — hold Shift, or Option on macOS, to bypass)
+- Search results now show the selected position (e.g. current/total) so it's
+  easier to tell where you are in the list
+- Improved search snippet previews — the context line now prefers locations
+  where query terms appear adjacent, instead of locking onto boilerplate matches
+  that happen earlier in the conversation
+- Fixed search ranking missing adjacent-phrase matches when the phrase was
+  wrapped in markdown punctuation like `**media pipeline**`
+- Added a Nix flake for installation on Nix systems
+  ([#32](https://github.com/raine/claude-history/pull/32),
+  [#34](https://github.com/raine/claude-history/pull/34))
+
 ## v0.1.51 (2026-03-29)
 
 - Improved search ranking — results now score matches by where they appear
