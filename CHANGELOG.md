@@ -12,8 +12,6 @@
 - Fixed search ranking missing adjacent-phrase matches when the phrase was
   wrapped in markdown punctuation like `**media pipeline**`
 - Added a Nix flake for installation on Nix systems
-  ([#32](https://github.com/raine/claude-history/pull/32),
-  [#34](https://github.com/raine/claude-history/pull/34))
 
 ## v0.1.51 (2026-03-29)
 
