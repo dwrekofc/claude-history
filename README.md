@@ -83,6 +83,8 @@ preview.
 | `Page Up` / `Page Down` | Jump by page                    |
 | `Home` / `End`          | Jump to first/last              |
 | `Enter`                 | Open conversation viewer        |
+| Mouse wheel             | Scroll the result list          |
+| Mouse click             | Open conversation under cursor  |
 | `Ctrl+O`                | Select and exit (for scripting) |
 | `Ctrl+W`                | Delete word before cursor       |
 | `Ctrl+R`                | Resume conversation             |

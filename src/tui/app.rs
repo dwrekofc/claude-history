@@ -10,7 +10,7 @@ use crate::tui::viewer::{MessageRange, ToolDisplayMode};
 use chrono::Local;
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-    MouseEventKind,
+    MouseButton, MouseEventKind,
 };
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::prelude::*;
@@ -2150,6 +2150,55 @@ impl App {
         }
     }
 
+    /// Handle a left-click in list mode: select the conversation under the cursor.
+    /// Returns true if the click landed on a list item — the caller is expected to
+    /// then transition into view mode (matching the Enter-key behavior).
+    pub fn handle_list_click(&mut self, row: u16, frame_area: Rect) -> bool {
+        if !matches!(self.app_mode, AppMode::List)
+            || self.dialog_mode != DialogMode::None
+            || self.is_loading()
+        {
+            return false;
+        }
+
+        // Mirror the layout in render_list_mode: outer 1px border, then split
+        // [search bar (2), list (Min 1), bottom bar (1)] — or omit the bottom
+        // bar when the inner area is < 4 lines tall.
+        let inner_height = frame_area.height.saturating_sub(2);
+        let list_y = frame_area.y.saturating_add(1).saturating_add(2);
+        let list_height = if inner_height < 4 {
+            inner_height.saturating_sub(2)
+        } else {
+            inner_height.saturating_sub(3)
+        };
+
+        if list_height == 0 || row < list_y || row >= list_y.saturating_add(list_height) {
+            return false;
+        }
+
+        // Mirror render_list: 4 lines per item when searching (extra context line),
+        // otherwise the LINES_PER_ITEM constant of 3.
+        let lines_per_item = if self.query.trim().is_empty() { 3 } else { 4 };
+        let items_per_page = (list_height as usize) / lines_per_item;
+        if items_per_page == 0 {
+            return false;
+        }
+
+        let offset = match self.selected {
+            Some(sel) => (sel / items_per_page) * items_per_page,
+            None => 0,
+        };
+        let relative_row = (row - list_y) as usize;
+        let relative_idx = relative_row / lines_per_item;
+        let new_idx = offset + relative_idx;
+        if new_idx < self.filtered.len() {
+            self.selected = Some(new_idx);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Sync focused message to the current scroll position
     fn sync_focus_to_scroll(state: &mut ViewState, viewport_height: usize) {
         if state.message_ranges.is_empty() {
@@ -2424,13 +2473,20 @@ pub fn run_with_loader(
             let key = match ev {
                 Event::Key(k) if k.kind == KeyEventKind::Press => k,
                 Event::Mouse(m) => {
-                    let lines = match m.kind {
-                        MouseEventKind::ScrollDown => 3,
-                        MouseEventKind::ScrollUp => -3,
-                        _ => 0,
-                    };
-                    if lines != 0 {
-                        app.scroll_mouse(lines, viewport_height);
+                    match m.kind {
+                        MouseEventKind::ScrollDown => {
+                            app.scroll_mouse(3, viewport_height);
+                        }
+                        MouseEventKind::ScrollUp => {
+                            app.scroll_mouse(-3, viewport_height);
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if app.handle_list_click(m.row, frame_area) {
+                                app.enter_view_mode(content_width);
+                                break; // mode transition: redraw before processing more events
+                            }
+                        }
+                        _ => {}
                     }
                     continue;
                 }
