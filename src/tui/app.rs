@@ -2003,33 +2003,47 @@ impl App {
                 content_width: state.content_width,
             };
 
-            if let Ok(rendered) = render_conversation(&state.conversation_path, &options) {
-                let old_scroll = state.scroll_offset;
-                // Preserve focus across re-render by saving the entry_index
-                let old_entry_index = state
-                    .focused_message
-                    .and_then(|i| state.message_ranges.get(i))
-                    .map(|m| m.entry_index);
+            // Capture an anchor against the current layout so we can restore the
+            // viewport against the same message after the total line count changes.
+            let anchor = capture_anchor(
+                &state.message_ranges,
+                state.scroll_offset,
+                state.focused_message,
+                state.message_nav_active,
+            );
+            let old_scroll = state.scroll_offset;
 
+            if let Ok(rendered) = render_conversation(&state.conversation_path, &options) {
                 state.total_lines = rendered.lines.len();
                 state.rendered_lines = rendered.lines;
                 state.message_ranges = rendered.messages;
 
-                // Restore focused message by entry_index
-                state.focused_message = old_entry_index.and_then(|old_idx| {
-                    state
-                        .message_ranges
-                        .iter()
-                        .position(|m| m.entry_index == old_idx)
-                });
-                // If old focus not found, default to first message
-                if state.focused_message.is_none() && !state.message_ranges.is_empty() {
-                    state.focused_message = Some(0);
-                }
-
-                // Clamp scroll offset to new content bounds
                 let max_scroll = state.total_lines.saturating_sub(viewport_height);
-                state.scroll_offset = old_scroll.min(max_scroll);
+
+                // Restore focused message by entry_index, falling back to the
+                // previous surviving entry if the exact one disappeared.
+                state.focused_message = anchor
+                    .and_then(|a| find_message_idx_or_prev(&state.message_ranges, a.entry_index));
+
+                state.scroll_offset = if let Some(a) = anchor {
+                    find_message_idx_or_prev(&state.message_ranges, a.entry_index)
+                        .map(|idx| {
+                            let new_msg = &state.message_ranges[idx];
+                            // If the anchor vanished, cap relative_row at 0 so the
+                            // fallback message sits at the top of the viewport rather
+                            // than being pushed down (revealing already-read content).
+                            let rel = if new_msg.entry_index == a.entry_index {
+                                a.relative_row
+                            } else {
+                                a.relative_row.min(0)
+                            };
+                            let raw = new_msg.start_line as isize - rel;
+                            raw.clamp(0, max_scroll as isize) as usize
+                        })
+                        .unwrap_or(0)
+                } else {
+                    old_scroll.min(max_scroll)
+                };
 
                 // Recompute search matches for new content
                 if state.search_mode == ViewSearchMode::Active && !state.search_query.is_empty() {
@@ -2294,6 +2308,61 @@ impl App {
             state.content_width = new_content_width;
             self.re_render_view(viewport_height);
         }
+    }
+}
+
+/// Stable reference point for preserving scroll position across re-renders.
+/// `entry_index` survives re-renders (it's the JSONL line index), and
+/// `relative_row` is the message's screen row (`start_line - scroll_offset`)
+/// before re-render. `isize` so it can go negative when the anchor started
+/// above the viewport.
+#[derive(Clone, Copy, Debug)]
+struct ScrollAnchor {
+    entry_index: usize,
+    relative_row: isize,
+}
+
+/// Pick an anchor message for the current view state.
+/// In nav mode the anchor is the focused message; otherwise it is the first
+/// message at or below the viewport top (falling back to the last message if
+/// the user has scrolled past the end).
+fn capture_anchor(
+    ranges: &[MessageRange],
+    scroll_offset: usize,
+    focused: Option<usize>,
+    nav_active: bool,
+) -> Option<ScrollAnchor> {
+    if ranges.is_empty() {
+        return None;
+    }
+
+    let msg = if nav_active {
+        focused.and_then(|i| ranges.get(i))
+    } else {
+        None
+    }
+    .unwrap_or_else(|| {
+        let i = ranges.partition_point(|m| m.start_line < scroll_offset);
+        ranges.get(i).unwrap_or_else(|| ranges.last().unwrap())
+    });
+
+    Some(ScrollAnchor {
+        entry_index: msg.entry_index,
+        relative_row: msg.start_line as isize - scroll_offset as isize,
+    })
+}
+
+/// Find the index of the message with this `entry_index`, or the closest
+/// preceding surviving entry. Returns `Some(0)` when no earlier entry exists
+/// but `ranges` is non-empty.
+fn find_message_idx_or_prev(ranges: &[MessageRange], entry_index: usize) -> Option<usize> {
+    if ranges.is_empty() {
+        return None;
+    }
+    match ranges.binary_search_by_key(&entry_index, |m| m.entry_index) {
+        Ok(idx) => Some(idx),
+        Err(0) => Some(0),
+        Err(idx) => Some(idx - 1),
     }
 }
 
