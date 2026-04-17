@@ -866,9 +866,10 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
         LoadingState::Loading { loaded } => {
             format!("Loading... {}", loaded)
         }
-        LoadingState::Ready => {
-            format!("{}/{}", app.filtered().len(), app.scoped_count())
-        }
+        LoadingState::Ready => match app.selected() {
+            Some(selected) => format!("{}/{}", selected + 1, app.filtered().len()),
+            None => format!("0/{}", app.filtered().len()),
+        },
     };
 
     // Build search line with optional "Project" prefix when workspace filter is active

@@ -727,30 +727,6 @@ impl App {
         &self.conversations
     }
 
-    /// Count of conversations in the current scope (project-filtered or all).
-    pub fn scoped_count(&self) -> usize {
-        if self.workspace_filter
-            && let Some(ref project_dir_name) = self.current_project_dir_name
-        {
-            return self
-                .conversations
-                .iter()
-                .filter(|c| {
-                    c.path
-                        .parent()
-                        .and_then(|p| p.file_name())
-                        .is_some_and(|name| {
-                            crate::history::path::is_same_project(
-                                &name.to_string_lossy(),
-                                project_dir_name,
-                            )
-                        })
-                })
-                .count();
-        }
-        self.conversations.len()
-    }
-
     pub fn selected(&self) -> Option<usize> {
         self.selected
     }
