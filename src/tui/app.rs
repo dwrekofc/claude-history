@@ -711,6 +711,21 @@ impl App {
         }
     }
 
+    /// Move list selection by a signed number of rows.
+    fn scroll_list(&mut self, delta: isize) {
+        let Some(selected) = self.selected else {
+            return;
+        };
+
+        let max = self.filtered.len().saturating_sub(1);
+        let new_selected = if delta >= 0 {
+            selected.saturating_add(delta as usize).min(max)
+        } else {
+            selected.saturating_sub((-delta) as usize)
+        };
+        self.selected = Some(new_selected);
+    }
+
     /// Get the currently selected conversation path
     fn get_selected_path(&self) -> Option<PathBuf> {
         self.selected
@@ -2123,6 +2138,18 @@ impl App {
         }
     }
 
+    /// Route mouse wheel scrolling to the active UI mode.
+    pub fn scroll_mouse(&mut self, delta: isize, viewport_height: usize) {
+        if self.dialog_mode != DialogMode::None {
+            return;
+        }
+
+        match self.app_mode {
+            AppMode::List => self.scroll_list(delta.signum()),
+            AppMode::View(_) => self.scroll_view(delta, viewport_height),
+        }
+    }
+
     /// Sync focused message to the current scroll position
     fn sync_focus_to_scroll(state: &mut ViewState, viewport_height: usize) {
         if state.message_ranges.is_empty() {
@@ -2403,7 +2430,7 @@ pub fn run_with_loader(
                         _ => 0,
                     };
                     if lines != 0 {
-                        app.scroll_view(lines, viewport_height);
+                        app.scroll_mouse(lines, viewport_height);
                     }
                     continue;
                 }
@@ -2491,7 +2518,7 @@ pub fn run_single_file(
                         _ => 0,
                     };
                     if lines != 0 {
-                        app.scroll_view(lines, viewport_height);
+                        app.scroll_mouse(lines, viewport_height);
                     }
                     continue;
                 }
