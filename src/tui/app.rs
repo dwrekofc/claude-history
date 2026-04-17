@@ -8,7 +8,10 @@ use crate::tui::search::{self, SearchableConversation};
 use crate::tui::ui;
 use crate::tui::viewer::{MessageRange, ToolDisplayMode};
 use chrono::Local;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseEventKind,
+};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::prelude::*;
 use std::io::{self, Stdout};
@@ -2123,6 +2126,27 @@ impl App {
         }
     }
 
+    /// Scroll the view by a signed number of lines (positive = down, negative = up).
+    /// Only affects the conversation viewer; no-op in other modes or while typing a search.
+    pub fn scroll_view(&mut self, delta: isize, viewport_height: usize) {
+        if let AppMode::View(ref mut state) = self.app_mode {
+            if state.search_mode == ViewSearchMode::Typing {
+                return;
+            }
+            let max_scroll = state.total_lines.saturating_sub(viewport_height);
+            let new_offset = if delta >= 0 {
+                state
+                    .scroll_offset
+                    .saturating_add(delta as usize)
+                    .min(max_scroll)
+            } else {
+                state.scroll_offset.saturating_sub((-delta) as usize)
+            };
+            state.scroll_offset = new_offset;
+            self.sync_focus_after_scroll(viewport_height);
+        }
+    }
+
     /// Sync focused message to the current scroll position
     fn sync_focus_to_scroll(state: &mut ViewState, viewport_height: usize) {
         if state.message_ranges.is_empty() {
@@ -2238,7 +2262,7 @@ impl TerminalGuard {
         terminal::enable_raw_mode().map_err(|e| AppError::Io(io::Error::other(e)))?;
 
         let mut stdout = io::stdout();
-        if let Err(e) = crossterm::execute!(stdout, EnterAlternateScreen) {
+        if let Err(e) = crossterm::execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
             let _ = terminal::disable_raw_mode();
             return Err(AppError::Io(io::Error::other(e)));
         }
@@ -2248,7 +2272,8 @@ impl TerminalGuard {
             Ok(t) => t,
             Err(e) => {
                 let _ = terminal::disable_raw_mode();
-                let _ = crossterm::execute!(io::stdout(), LeaveAlternateScreen);
+                let _ =
+                    crossterm::execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
                 return Err(AppError::Io(io::Error::other(e)));
             }
         };
@@ -2260,7 +2285,11 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
-        let _ = crossterm::execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = crossterm::execute!(
+            self.terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
     }
 }
 
@@ -2306,7 +2335,7 @@ pub fn run_with_loader(
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         let _ = terminal::disable_raw_mode();
-        let _ = crossterm::execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = crossterm::execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
         original_hook(panic_info);
     }));
 
@@ -2389,10 +2418,21 @@ pub fn run_with_loader(
         // while always returning to the outer loop for a redraw after each batch.
         let events = drain_events(poll_timeout)?;
         for ev in events {
-            let Event::Key(key) = ev else { continue };
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
+            let key = match ev {
+                Event::Key(k) if k.kind == KeyEventKind::Press => k,
+                Event::Mouse(m) => {
+                    let lines = match m.kind {
+                        MouseEventKind::ScrollDown => 3,
+                        MouseEventKind::ScrollUp => -3,
+                        _ => 0,
+                    };
+                    if lines != 0 {
+                        app.scroll_view(lines, viewport_height);
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
 
             // Check for Enter in list mode - enter view mode (but not during dialogs)
             if matches!(app.app_mode(), AppMode::List)
@@ -2446,7 +2486,7 @@ pub fn run_single_file(
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         let _ = terminal::disable_raw_mode();
-        let _ = crossterm::execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = crossterm::execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
         original_hook(panic_info);
     }));
 
@@ -2466,10 +2506,21 @@ pub fn run_single_file(
 
         let events = drain_events(Duration::from_secs(3600))?;
         for ev in events {
-            let Event::Key(key) = ev else { continue };
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
+            let key = match ev {
+                Event::Key(k) if k.kind == KeyEventKind::Press => k,
+                Event::Mouse(m) => {
+                    let lines = match m.kind {
+                        MouseEventKind::ScrollDown => 3,
+                        MouseEventKind::ScrollUp => -3,
+                        _ => 0,
+                    };
+                    if lines != 0 {
+                        app.scroll_view(lines, viewport_height);
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
             if let Some(Action::Quit) = app.handle_key(key.code, key.modifiers, viewport_height) {
                 return Ok(());
             }

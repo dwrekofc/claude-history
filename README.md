@@ -99,6 +99,7 @@ preview.
 | -------------- | -------------------------------------------------- |
 | `j` / `↓`      | Scroll down                                        |
 | `k` / `↑`      | Scroll up                                          |
+| Mouse wheel    | Scroll the conversation                            |
 | `J` / `]`      | Jump to next message                               |
 | `K` / `[`      | Jump to previous message                           |
 | `d` / `Ctrl+D` | Half page down                                     |
@@ -182,7 +183,8 @@ conversations in a ledger-style format with scrolling support.
 
 **Features:**
 
-- **Scrolling**: Navigate with vim-style keys (`j`/`k`) or arrow keys
+- **Scrolling**: Navigate with vim-style keys (`j`/`k`), arrow keys, or the
+  mouse wheel
 - **Search**: Press `/` to search within the conversation, then `n`/`N` to
   navigate matches
 - **Cycle tools**: Press `t` to cycle tool display (off → truncated → full)
