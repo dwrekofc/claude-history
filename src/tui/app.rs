@@ -2020,29 +2020,31 @@ impl App {
 
                 let max_scroll = state.total_lines.saturating_sub(viewport_height);
 
-                // Restore focused message by entry_index, falling back to the
-                // previous surviving entry if the exact one disappeared.
-                state.focused_message = anchor
-                    .and_then(|a| find_message_idx_or_prev(&state.message_ranges, a.entry_index));
+                // Resolve focused message by entry_index, falling back to the
+                // previous surviving entry if the exact one disappeared. If no
+                // anchor existed (ranges was previously empty) but ranges is now
+                // non-empty, default to the first message so nav mode has a
+                // valid focus target.
+                let resolved_idx = anchor
+                    .and_then(|a| find_message_idx_or_prev(&state.message_ranges, a.entry_index))
+                    .or_else(|| (!state.message_ranges.is_empty()).then_some(0));
+                state.focused_message = resolved_idx;
 
-                state.scroll_offset = if let Some(a) = anchor {
-                    find_message_idx_or_prev(&state.message_ranges, a.entry_index)
-                        .map(|idx| {
-                            let new_msg = &state.message_ranges[idx];
-                            // If the anchor vanished, cap relative_row at 0 so the
-                            // fallback message sits at the top of the viewport rather
-                            // than being pushed down (revealing already-read content).
-                            let rel = if new_msg.entry_index == a.entry_index {
-                                a.relative_row
-                            } else {
-                                a.relative_row.min(0)
-                            };
-                            let raw = new_msg.start_line as isize - rel;
-                            raw.clamp(0, max_scroll as isize) as usize
-                        })
-                        .unwrap_or(0)
-                } else {
-                    old_scroll.min(max_scroll)
+                state.scroll_offset = match (anchor, resolved_idx) {
+                    (Some(a), Some(idx)) => {
+                        let new_msg = &state.message_ranges[idx];
+                        // If the anchor vanished, cap relative_row at 0 so the
+                        // fallback message sits at the top of the viewport rather
+                        // than being pushed down (revealing already-read content).
+                        let rel = if new_msg.entry_index == a.entry_index {
+                            a.relative_row
+                        } else {
+                            a.relative_row.min(0)
+                        };
+                        let raw = new_msg.start_line as isize - rel;
+                        raw.clamp(0, max_scroll as isize) as usize
+                    }
+                    _ => old_scroll.min(max_scroll),
                 };
 
                 // Recompute search matches for new content
