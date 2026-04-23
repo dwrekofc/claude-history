@@ -917,12 +917,7 @@ impl TuiMarkdownRenderer {
 
             // Check if we need to wrap
             if self.current_width + word_width > self.max_width && self.current_width > 0 {
-                self.flush_line();
-                // Add list indent on continuation
-                if let Some(ctx) = self.list_stack.last() {
-                    let indent = "  ".repeat(ctx.depth + 1);
-                    self.push_styled_text(&indent, LineStyle::default());
-                }
+                self.break_line_with_indent();
             }
 
             self.push_styled_text(word, style.clone());
@@ -938,11 +933,7 @@ impl TuiMarkdownRenderer {
         // Wrap to next line if the code won't fit on the current line
         let code_width = code.width();
         if self.current_width + code_width > self.max_width && self.current_width > 0 {
-            self.flush_line();
-            if let Some(ctx) = self.list_stack.last() {
-                let indent = "  ".repeat(ctx.depth + 1);
-                self.push_styled_text(&indent, LineStyle::default());
-            }
+            self.break_line_with_indent();
         }
 
         self.push_styled_text(
@@ -955,11 +946,11 @@ impl TuiMarkdownRenderer {
     }
 
     fn soft_break(&mut self) {
-        self.flush_line();
+        self.break_line_with_indent();
     }
 
     fn hard_break(&mut self) {
-        self.flush_line();
+        self.break_line_with_indent();
     }
 
     fn rule(&mut self) {
@@ -989,6 +980,14 @@ impl TuiMarkdownRenderer {
             });
         }
         self.current_width = 0;
+    }
+
+    fn break_line_with_indent(&mut self) {
+        self.flush_line();
+        if let Some(ctx) = self.list_stack.last() {
+            let indent = "  ".repeat(ctx.depth + 1);
+            self.push_styled_text(&indent, LineStyle::default());
+        }
     }
 
     fn ensure_blank_line(&mut self) {
