@@ -897,13 +897,15 @@ impl TuiMarkdownRenderer {
     }
 
     fn text(&mut self, text: &str) {
+        let text = text.replace('\t', "    ");
+
         if let Some(ref mut state) = self.table_state {
             state.current_cell.push_str(&text.replace('\n', " "));
             return;
         }
 
         if self.in_code_block {
-            self.code_block_content.push_str(text);
+            self.code_block_content.push_str(&text);
             return;
         }
 
