@@ -8,6 +8,7 @@ use crate::claude::{self, AssistantMessage, ContentBlock, LogEntry, UserContent}
 use crate::tool_format;
 use crate::tui::app::{LineStyle, RenderedLine};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -897,7 +898,11 @@ impl TuiMarkdownRenderer {
     }
 
     fn text(&mut self, text: &str) {
-        let text = text.replace('\t', "    ");
+        let text: Cow<str> = if text.contains('\t') {
+            Cow::Owned(text.replace('\t', "    "))
+        } else {
+            Cow::Borrowed(text)
+        };
 
         if let Some(ref mut state) = self.table_state {
             state.current_cell.push_str(&text.replace('\n', " "));
