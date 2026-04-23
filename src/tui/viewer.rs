@@ -953,8 +953,7 @@ impl TuiMarkdownRenderer {
     }
 
     fn soft_break(&mut self) {
-        // A single newline in markdown is a soft break — treat as space
-        self.text(" ");
+        self.flush_line();
     }
 
     fn hard_break(&mut self) {
