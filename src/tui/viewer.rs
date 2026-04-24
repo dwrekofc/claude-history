@@ -1455,8 +1455,15 @@ fn render_tool_result(
     timestamp: Option<&str>,
     tool_display: ToolDisplayMode,
 ) {
+    // Fence plain text tool results to prevent markdown misinterpretation.
+    // If the result already contains fenced code blocks, assume it's intentional markdown.
+    let text = if text.contains("```") {
+        text.to_string()
+    } else {
+        format!("```text\n{}\n```", text)
+    };
     // Render markdown
-    let styled_lines = render_markdown_to_lines(text, content_width);
+    let styled_lines = render_markdown_to_lines(&text, content_width);
 
     let total = styled_lines.len();
     let limit = if tool_display == ToolDisplayMode::Truncated && total > TRUNCATED_RESULT_LINES {
