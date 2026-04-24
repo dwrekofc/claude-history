@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::tui::theme::{self, Theme};
 
@@ -588,6 +588,24 @@ struct StyledLine {
     spans: Vec<(String, LineStyle)>,
 }
 
+/// Expand tab characters to spaces using tab stops.
+/// `start_col` is the current visual column (0-based) where `input` begins.
+fn expand_tabs(input: &str, start_col: usize, tab_width: usize) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut col = start_col;
+    for ch in input.chars() {
+        if ch == '\t' {
+            let spaces = tab_width - (col % tab_width);
+            out.extend(std::iter::repeat_n(' ', spaces));
+            col += spaces;
+        } else {
+            out.push(ch);
+            col += UnicodeWidthChar::width(ch).unwrap_or(0);
+        }
+    }
+    out
+}
+
 /// Render markdown text to styled lines for TUI display
 fn render_markdown_to_lines(input: &str, max_width: usize) -> Vec<StyledLine> {
     let mut options = Options::empty();
@@ -899,7 +917,7 @@ impl TuiMarkdownRenderer {
 
     fn text(&mut self, text: &str) {
         let text: Cow<str> = if text.contains('\t') {
-            Cow::Owned(text.replace('\t', "    "))
+            Cow::Owned(expand_tabs(text, self.current_width, 8))
         } else {
             Cow::Borrowed(text)
         };
