@@ -914,6 +914,16 @@ impl TuiMarkdownRenderer {
             return;
         }
 
+        // Normalize newlines to spaces for regular text.
+        // Proper line breaks come from SoftBreak/HardBreak events; embedded \n
+        // in Text events (e.g. from HTML blocks) would otherwise be pushed into
+        // spans where ratatui doesn't interpret them as line breaks.
+        let text: Cow<str> = if text.contains('\n') {
+            Cow::Owned(text.replace('\n', " "))
+        } else {
+            text
+        };
+
         let style = self.current_style();
 
         // Handle text wrapping
