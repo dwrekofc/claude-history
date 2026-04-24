@@ -590,6 +590,9 @@ fn render_markdown_to_lines(input: &str, max_width: usize) -> Vec<StyledLine> {
     let doc = crate::markdown::layout::LayoutEngine::render(input, max_width);
     doc.lines
         .into_iter()
+        // Drop fence-only lines — TUI signals code blocks via color instead.
+        // Empty lines are kept (they're blank spacers, not fences).
+        .filter(|line| line.runs.is_empty() || line.runs.iter().any(|r| !r.attrs.code_fence))
         .map(|line| StyledLine {
             spans: line
                 .runs
@@ -1546,14 +1549,13 @@ mod tests {
     fn test_code_block() {
         let result = render_to_text("Text\n\n```rust\nlet x = 1;\n```\n\nMore text", 80);
         let lines: Vec<&str> = result.lines().collect();
-        // Should have: text, blank, fence, code, fence, blank, more text
-        assert!(result.contains("```"));
+        // TUI strips fence markers (signaled via color instead).
+        assert!(!result.contains("```"));
         assert!(result.contains("let x = 1;"));
 
         // Check for proper spacing
         let text_idx = lines.iter().position(|l| l == &"Text").unwrap();
         let more_idx = lines.iter().position(|l| l == &"More text").unwrap();
-        // Should have blank line after Text and before More text
         assert_eq!(lines[text_idx + 1], "", "Should have blank line after Text");
         assert_eq!(
             lines[more_idx - 1],

@@ -27,6 +27,9 @@ pub struct Attrs {
     /// Marks the `# ` prefix emitted before heading text.
     /// Sinks that don't want to show the literal marker (e.g. TUI) can skip it.
     pub heading_marker: bool,
+    /// Marks the opening/closing ``` fence of a code block.
+    /// Sinks that don't want to show fence markers (e.g. TUI) can skip them.
+    pub code_fence: bool,
 }
 
 /// A run of text with uniform attributes.
@@ -301,6 +304,7 @@ impl LayoutEngine {
                     &fence,
                     Attrs {
                         dimmed: true,
+                        code_fence: true,
                         ..Attrs::default()
                     },
                 );
@@ -469,6 +473,7 @@ impl LayoutEngine {
                     "```",
                     Attrs {
                         dimmed: true,
+                        code_fence: true,
                         ..Attrs::default()
                     },
                 );
