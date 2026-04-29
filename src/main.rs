@@ -60,6 +60,10 @@ fn run() -> Result<()> {
     if let Some(command) = args.command {
         return match command {
             Commands::Update => update::run(),
+            Commands::ExportProjectMarkdown {
+                project_dir,
+                output_dir,
+            } => export_project_markdown(&project_dir, &output_dir),
         };
     }
 
@@ -403,6 +407,111 @@ fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn export_project_markdown(project_dir: &Path, output_dir: &Path) -> Result<()> {
+    let project_dir = project_dir.canonicalize().map_err(AppError::Io)?;
+    let claude_project_dir = history::get_claude_projects_dir(&project_dir)?;
+    if !claude_project_dir.exists() {
+        return Err(AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "Claude project history not found: {}",
+                claude_project_dir.display()
+            ),
+        )));
+    }
+
+    std::fs::create_dir_all(output_dir).map_err(AppError::Io)?;
+
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&claude_project_dir).map_err(AppError::Io)? {
+        let entry = entry.map_err(AppError::Io)?;
+        let path = entry.path();
+        let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+            && !filename.starts_with("agent-")
+        {
+            let modified = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            files.push((path, modified));
+        }
+    }
+    files.sort_by_key(|(_, modified)| *modified);
+
+    let options = tui::export::ExportOptions {
+        show_tools: false,
+        show_thinking: false,
+    };
+
+    let mut written = 0usize;
+    for (idx, (path, modified)) in files.iter().enumerate() {
+        let content =
+            tui::export::generate_content(path, tui::export::ExportFormat::Markdown, options)
+                .map_err(AppError::Io)?;
+        if content.trim().is_empty() {
+            continue;
+        }
+
+        let conversation = history::process_conversation_file(path.clone(), Some(*modified), None)?;
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("session");
+        let title = conversation
+            .as_ref()
+            .and_then(|conv| {
+                conv.custom_title
+                    .as_deref()
+                    .or(conv.summary.as_deref())
+                    .or(Some(conv.preview.as_str()))
+            })
+            .unwrap_or(stem);
+        let date = conversation
+            .as_ref()
+            .map(|conv| conv.timestamp.format("%Y-%m-%d-%H%M%S").to_string())
+            .unwrap_or_else(|| format!("{:03}", idx + 1));
+        let filename = format!("{:03}-{}-{}.md", idx + 1, date, sanitize_filename(title));
+        let output_path = output_dir.join(filename);
+        std::fs::write(&output_path, content).map_err(AppError::Io)?;
+        println!("{}", output_path.display());
+        written += 1;
+    }
+
+    eprintln!(
+        "Exported {} Markdown files from {}",
+        written,
+        claude_project_dir.display()
+    );
+    Ok(())
+}
+
+fn sanitize_filename(input: &str) -> String {
+    let mut output = String::new();
+    let mut previous_dash = false;
+    for ch in input.chars() {
+        let lower = ch.to_ascii_lowercase();
+        if lower.is_ascii_alphanumeric() {
+            output.push(lower);
+            previous_dash = false;
+        } else if !previous_dash {
+            output.push('-');
+            previous_dash = true;
+        }
+        if output.len() >= 80 {
+            break;
+        }
+    }
+    let trimmed = output.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "conversation".to_string()
+    } else {
+        trimmed
+    }
 }
 
 fn resume_with_claude(

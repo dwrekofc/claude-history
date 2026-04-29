@@ -44,6 +44,16 @@ impl fmt::Display for DebugLevel {
 pub enum Commands {
     /// Update claude-history to the latest version
     Update,
+    /// Export all conversations for a project directory to Markdown files
+    ExportProjectMarkdown {
+        /// Project/workspace directory whose Claude history should be exported
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        project_dir: PathBuf,
+
+        /// Directory where Markdown files should be written
+        #[arg(long, value_name = "DIR")]
+        output_dir: PathBuf,
+    },
 }
 
 #[derive(Parser, Debug)]

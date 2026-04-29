@@ -12,6 +12,7 @@
 use crate::claude::{self, AgentContent, ContentBlock, LogEntry, UserContent, UserMessage};
 use crate::tool_format;
 use chrono::Local;
+use std::collections::HashMap;
 use std::fs::{self, File};
 #[cfg(target_os = "linux")]
 use std::io::Write as _;
@@ -307,7 +308,7 @@ fn format_entry_for_clipboard(entry: &LogEntry, options: ExportOptions) -> Strin
 }
 
 /// Generate content in the specified format
-fn generate_content(
+pub fn generate_content(
     source_path: &Path,
     format: ExportFormat,
     options: ExportOptions,
@@ -397,7 +398,8 @@ fn generate_plain(path: &Path, options: ExportOptions) -> std::io::Result<String
 fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<String> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
-    let mut output = String::new();
+    let mut turns: Vec<MarkdownTurn> = Vec::new();
+    let mut assistant_turn_by_message_id: HashMap<String, usize> = HashMap::new();
 
     for line in reader.lines() {
         let line = line?;
@@ -416,7 +418,13 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                     }
                     let prefix = subagent_prefix(&parent_tool_use_id);
                     if let Some(text) = extract_user_text(&message) {
-                        output.push_str(&format!("## {}You\n\n{}\n\n", prefix, text));
+                        let text = strip_export_metadata(&text);
+                        if !text.is_empty() {
+                            turns.push(MarkdownTurn {
+                                role: format!("{}You", prefix),
+                                text,
+                            });
+                        }
                     }
                     // Tool results
                     if options.show_tools
@@ -426,10 +434,10 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                             if let ContentBlock::ToolResult { content, .. } = block {
                                 let content_str = format_tool_result_for_export(content.as_ref());
                                 let fenced = markdown_code_fence(&content_str);
-                                output.push_str(&format!(
-                                    "### {}Tool Result\n\n{}\n\n",
-                                    prefix, fenced
-                                ));
+                                turns.push(MarkdownTurn {
+                                    role: format!("{}Tool Result", prefix),
+                                    text: fenced,
+                                });
                             }
                         }
                     }
@@ -443,26 +451,58 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
                         continue;
                     }
                     let prefix = subagent_prefix(&parent_tool_use_id);
+                    let mut assistant_text = String::new();
                     for block in &message.content {
                         match block {
                             ContentBlock::Text { text } => {
-                                output.push_str(&format!("## {}Claude\n\n{}\n\n", prefix, text));
+                                let text = strip_export_metadata(text);
+                                if !text.is_empty() {
+                                    if !assistant_text.is_empty() {
+                                        assistant_text.push_str("\n\n");
+                                    }
+                                    assistant_text.push_str(&text);
+                                }
                             }
                             ContentBlock::ToolUse { name, input, .. } if options.show_tools => {
                                 let formatted = format_tool_call_for_export(name, input);
                                 let fenced = markdown_code_fence(&formatted);
-                                output.push_str(&format!(
-                                    "### {}Tool: {}\n\n{}\n\n",
-                                    prefix, name, fenced
-                                ));
+                                turns.push(MarkdownTurn {
+                                    role: format!("{}Tool: {}", prefix, name),
+                                    text: fenced,
+                                });
                             }
                             ContentBlock::Thinking { thinking, .. } if options.show_thinking => {
-                                output.push_str(&format!(
-                                    "### {}Thinking\n\n{}\n\n",
-                                    prefix, thinking
-                                ));
+                                turns.push(MarkdownTurn {
+                                    role: format!("{}Thinking", prefix),
+                                    text: thinking.clone(),
+                                });
                             }
                             _ => {}
+                        }
+                    }
+                    if !assistant_text.is_empty() {
+                        let role = format!("{}Claude", prefix);
+                        if let Some(message_id) = message.id.as_ref() {
+                            if let Some(existing_index) =
+                                assistant_turn_by_message_id.get(message_id)
+                            {
+                                turns[*existing_index] = MarkdownTurn {
+                                    role,
+                                    text: assistant_text,
+                                };
+                            } else {
+                                assistant_turn_by_message_id
+                                    .insert(message_id.clone(), turns.len());
+                                turns.push(MarkdownTurn {
+                                    role,
+                                    text: assistant_text,
+                                });
+                            }
+                        } else {
+                            turns.push(MarkdownTurn {
+                                role,
+                                text: assistant_text,
+                            });
                         }
                     }
                 }
@@ -471,7 +511,29 @@ fn generate_markdown(path: &Path, options: ExportOptions) -> std::io::Result<Str
         }
     }
 
+    let mut output = String::new();
+    for turn in turns {
+        output.push_str(&format!("## {}\n\n{}\n\n", turn.role, turn.text));
+    }
+
     Ok(output)
+}
+
+struct MarkdownTurn {
+    role: String,
+    text: String,
+}
+
+fn strip_export_metadata(text: &str) -> String {
+    let mut output = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("<usage>") && trimmed.ends_with("</usage>") {
+            continue;
+        }
+        output.push(line);
+    }
+    output.join("\n").trim().to_string()
 }
 
 /// Total line width for ledger export (including name column and separator)

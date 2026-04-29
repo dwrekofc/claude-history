@@ -51,6 +51,29 @@ brew install raine/claude-history/claude-history
 cargo install claude-history
 ```
 
+### From this fork
+
+This fork adds a non-interactive Markdown export command for agents and scripts:
+
+```sh
+cargo install --git https://github.com/dwrekofc/claude-history.git
+```
+
+Or build from a checkout:
+
+```sh
+git clone https://github.com/dwrekofc/claude-history.git
+cd claude-history
+cargo build --release
+install -m 755 target/release/claude-history ~/.local/bin/claude-history
+```
+
+Install the included Claude Code and Codex skill files:
+
+```sh
+./scripts/install-agent-skills.sh
+```
+
 ## Updating
 
 ```sh
@@ -177,6 +200,41 @@ $ claude-history --show-tools --show-thinking /path/to/conversation.jsonl
 ```
 
 Press `q` or `Esc` to quit when viewing a file directly.
+
+### Batch Markdown export for a project
+
+This fork includes an agent-friendly command that exports every Claude Code
+session for a specific project/workspace directory to one Markdown file per
+session:
+
+```sh
+claude-history export-project-markdown \
+  --project-dir /path/to/project \
+  --output-dir /path/to/export/chat-history
+```
+
+The exporter resolves `/path/to/project` to Claude's local project history
+directory under `~/.claude/projects`, skips `agent-*` JSONL side files, and
+writes files in chronological order with stable numbered filenames.
+
+The Markdown output includes only top-level user messages and agent messages.
+Tool calls, tool results, thinking blocks, subagent internals, and Claude usage
+metadata are omitted. This makes the command suitable for handing prior project
+context to another agent without leaking terminal/tool noise.
+
+Agent prompt template:
+
+```text
+Use claude-history to export this project's Claude Code chat history:
+
+claude-history export-project-markdown \
+  --project-dir "$PROJECT_DIR" \
+  --output-dir "$OUTPUT_DIR"
+
+Set PROJECT_DIR to the repository/workspace whose history I want. Set
+OUTPUT_DIR to the folder where the Markdown files should be written. Do not use
+the interactive TUI for this task.
+```
 
 ### Conversation viewer
 

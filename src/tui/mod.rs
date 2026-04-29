@@ -1,5 +1,5 @@
 mod app;
-mod export;
+pub mod export;
 pub mod search;
 pub mod theme;
 mod ui;
