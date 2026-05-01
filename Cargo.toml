@@ -2,12 +2,12 @@
 name = "claude-history"
 version = "0.1.53"
 edition = "2024"
-description = "Fuzzy-search Claude Code conversation history from the terminal."
+description = "Search Claude Code history and export Claude or Codex project chats."
 readme = "README.md"
 license = "MIT"
-repository = "https://github.com/raine/claude-history"
-homepage = "https://github.com/raine/claude-history"
-keywords = ["claude", "claude-code", "fzf", "cli", "history"]
+repository = "https://github.com/dwrekofc/claude-history"
+homepage = "https://github.com/dwrekofc/claude-history"
+keywords = ["claude", "codex", "claude-code", "cli", "history"]
 categories = ["command-line-utilities"]
 
 [dependencies]

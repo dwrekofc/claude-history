@@ -1,17 +1,19 @@
-# claude-history
+# Claude and Codex History Exporter
 
 <img src="/meta/screenshot.webp" />
 
 > _"This is the best thing ever thanks for this project."_ —
 > [@andrewle8](https://github.com/andrewle8)
 
-`claude-history` is a companion CLI for Claude Code. It lets you search recent
-conversations recorded in Claude's local project history with a built-in
-terminal UI, then view the selected transcript directly in the terminal with
-scrolling, search, and export capabilities.
+`claude-history` is a companion CLI for Claude Code and Codex CLI history. It
+lets you search recent conversations recorded in Claude's local project history
+with a built-in terminal UI, then view the selected transcript directly in the
+terminal with scrolling, search, and export capabilities. This fork also adds
+non-interactive Markdown export for Claude Code and Codex CLI project sessions.
 
 Run it from the project directory you work on with Claude Code and it will
-discover the matching transcript folder automatically.
+discover the matching Claude transcript folder automatically. For batch export,
+use the provider-specific commands documented below.
 
 [Install](#install) · [Features](#features) · [Usage](#usage) ·
 [Configuration](#configuration) · [Changelog](CHANGELOG.md)
@@ -53,7 +55,7 @@ cargo install claude-history
 
 ### From this fork
 
-This fork adds a non-interactive Markdown export command for agents and scripts:
+This fork adds non-interactive Markdown export commands for agents and scripts:
 
 ```sh
 cargo install --git https://github.com/dwrekofc/claude-history.git
@@ -203,9 +205,26 @@ Press `q` or `Esc` to quit when viewing a file directly.
 
 ### Batch Markdown export for a project
 
-This fork includes an agent-friendly command that exports every Claude Code
-session for a specific project/workspace directory to one Markdown file per
-session:
+This fork includes agent-friendly commands that export provider history for a
+specific project/workspace directory to one Markdown file per session.
+
+Claude Code:
+
+```sh
+claude-history export claude \
+  --project-dir /path/to/project \
+  --output-dir /path/to/export/chat-history
+```
+
+Codex CLI:
+
+```sh
+claude-history export codex \
+  --project-dir /path/to/project \
+  --output-dir /path/to/export/chat-history
+```
+
+The legacy Claude command remains available:
 
 ```sh
 claude-history export-project-markdown \
@@ -213,21 +232,33 @@ claude-history export-project-markdown \
   --output-dir /path/to/export/chat-history
 ```
 
-The exporter resolves `/path/to/project` to Claude's local project history
-directory under `~/.claude/projects`, skips `agent-*` JSONL side files, and
-writes files in chronological order with stable numbered filenames.
+The Claude exporter resolves `/path/to/project` to Claude's local project
+history directory under `~/.claude/projects`, skips `agent-*` JSONL side files,
+and writes files in newest-activity order with stable numbered filenames.
+
+The Codex exporter scans rollout files under `~/.codex/sessions`, filters to
+sessions whose `session_meta.payload.cwd` canonicalizes to `--project-dir`, and
+writes files in newest-activity order with stable numbered filenames.
+
+The timestamp in each export filename is the last accepted user/agent message
+timestamp for that chat, not the session creation time.
 
 The Markdown output includes only top-level user messages and agent messages.
-Tool calls, tool results, thinking blocks, subagent internals, and Claude usage
-metadata are omitted. This makes the command suitable for handing prior project
-context to another agent without leaking terminal/tool noise.
+Tool calls, tool results, thinking/reasoning blocks, subagent internals, session
+metadata, and usage metadata are omitted. This makes the commands suitable for
+handing prior project context to another agent without leaking terminal/tool
+noise.
 
 Agent prompt template:
 
 ```text
-Use claude-history to export this project's Claude Code chat history:
+Use claude-history to export this project's chat history:
 
-claude-history export-project-markdown \
+claude-history export claude \
+  --project-dir "$PROJECT_DIR" \
+  --output-dir "$OUTPUT_DIR"
+
+claude-history export codex \
   --project-dir "$PROJECT_DIR" \
   --output-dir "$OUTPUT_DIR"
 

@@ -1,6 +1,6 @@
 ---
 name: claude-history-export
-description: Export Claude Code chat histories for a specific project to Markdown using the non-interactive claude-history export-project-markdown command. Use when a user asks to export, archive, migrate, or inspect Claude Code project chat history without tool calls or thinking.
+description: Export Claude Code chat histories for a specific project to Markdown using the non-interactive claude-history export claude command. Use when a user asks to export, archive, migrate, or inspect Claude Code project chat history without tool calls or thinking.
 ---
 
 # Claude History Export
@@ -24,7 +24,7 @@ cargo install --git https://github.com/dwrekofc/claude-history.git
 3. Run:
 
 ```sh
-claude-history export-project-markdown \
+claude-history export claude \
   --project-dir "$PROJECT_DIR" \
   --output-dir "$OUTPUT_DIR"
 ```

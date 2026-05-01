@@ -1,12 +1,12 @@
 ---
-name: claude-history-export
-description: Export Claude Code chat histories for a specific project to Markdown using the non-interactive claude-history export-project-markdown command. Use when a user asks to export, archive, migrate, or inspect Claude Code project chat history without tool calls or thinking.
+name: codex-history-export
+description: Export Codex CLI chat histories for a specific project to Markdown using the non-interactive claude-history export codex command. Use when a user asks to export, archive, migrate, or inspect Codex CLI project chat history without tool calls or reasoning.
 ---
 
-# Claude History Export
+# Codex History Export
 
-Use this skill to export Claude Code conversations for one project into
-Markdown files that contain only user messages and agent messages.
+Use this skill to export Codex CLI conversations for one project into Markdown
+files that contain only user messages and agent messages.
 
 ## Requirements
 
@@ -24,7 +24,7 @@ cargo install --git https://github.com/dwrekofc/claude-history.git
 3. Run:
 
 ```sh
-claude-history export-project-markdown \
+claude-history export codex \
   --project-dir "$PROJECT_DIR" \
   --output-dir "$OUTPUT_DIR"
 ```
@@ -33,7 +33,7 @@ claude-history export-project-markdown \
 
 ```sh
 find "$OUTPUT_DIR" -maxdepth 1 -type f -name '*.md' | sort
-rg -n 'tool_use|tool_result|parent_tool_use_id|<usage>|</usage>|<thinking>|thinking_delta|toolUseResult' "$OUTPUT_DIR" || true
+rg -n 'function_call|function_call_output|encrypted_content|turn_context|<environment_context>|AGENTS.md instructions' "$OUTPUT_DIR" || true
 ```
 
 The export command is intentionally non-interactive. Do not open the TUI for
@@ -41,6 +41,6 @@ batch exports.
 
 ## Output Semantics
 
-The Markdown files include top-level user messages and top-level Claude/agent
-messages. Tool calls, tool results, thinking blocks, subagent internals, and
-usage metadata are omitted.
+The Markdown files include top-level user messages and top-level Codex/agent
+messages. Tool calls, tool results, reasoning blocks, turn context, session
+metadata, and automatic environment/instruction context are omitted.

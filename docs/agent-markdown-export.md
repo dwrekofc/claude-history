@@ -1,7 +1,7 @@
 # Agent Markdown Export
 
-This fork adds a non-interactive export path for agents that need Claude Code
-chat history from a specific project.
+This fork adds non-interactive export paths for agents that need Claude Code or
+Codex CLI chat history from a specific project.
 
 ## Build and install
 
@@ -25,7 +25,23 @@ on `PATH`.
 
 ## Export a specific project
 
-Run:
+Export Claude Code history:
+
+```sh
+claude-history export claude \
+  --project-dir /absolute/path/to/project \
+  --output-dir /absolute/path/to/export/folder
+```
+
+Export Codex CLI history:
+
+```sh
+claude-history export codex \
+  --project-dir /absolute/path/to/project \
+  --output-dir /absolute/path/to/export/folder
+```
+
+The old Claude-only command is still supported:
 
 ```sh
 claude-history export-project-markdown \
@@ -36,20 +52,30 @@ claude-history export-project-markdown \
 Example:
 
 ```sh
-claude-history export-project-markdown \
+claude-history export codex \
   --project-dir /Volumes/CORE-02/resources/sap-website-download/us.sitesucker.mac.sitesucker \
   --output-dir /Volumes/CORE-02/resources/sap-website-download/chat-history
 ```
 
-The command:
+The Claude command:
 
 - maps `--project-dir` to the matching Claude Code project history folder
   under `~/.claude/projects`
 - exports one `.md` file per top-level conversation
-- sorts sessions chronologically
-- prefixes output filenames with a stable sequence number and timestamp
+- sorts sessions by newest last-message activity
+- prefixes output filenames with a stable sequence number and last-message timestamp
 - omits `agent-*` sidecar logs
 - omits tools, tool results, thinking blocks, subagent internals, and usage
+  metadata
+
+The Codex command:
+
+- scans `~/.codex/sessions` for `rollout-*.jsonl`
+- matches sessions whose recorded `cwd` canonicalizes exactly to `--project-dir`
+- exports one `.md` file per conversation
+- sorts sessions by newest last-message activity
+- prefixes output filenames with a stable sequence number and last-message timestamp
+- omits tool calls, tool results, reasoning blocks, turn context, and session
   metadata
 
 ## Agent instructions
@@ -59,12 +85,14 @@ When asked to export chat history for a project:
 1. Identify the target project directory. Prefer the current working directory
    if the user says "this project".
 2. Choose or create an output directory.
-3. Run `claude-history export-project-markdown --project-dir ... --output-dir ...`.
+3. Run `claude-history export claude --project-dir ... --output-dir ...` for
+   Claude Code, or `claude-history export codex --project-dir ... --output-dir ...`
+   for Codex CLI.
 4. Verify the output:
 
 ```sh
 find "$OUTPUT_DIR" -maxdepth 1 -type f -name '*.md' | sort
-rg -n 'tool_use|tool_result|parent_tool_use_id|<usage>|</usage>|<thinking>|thinking_delta|toolUseResult' "$OUTPUT_DIR" || true
+rg -n 'tool_use|tool_result|parent_tool_use_id|<usage>|</usage>|<thinking>|thinking_delta|toolUseResult|function_call|function_call_output|encrypted_content|turn_context' "$OUTPUT_DIR" || true
 ```
 
 The `rg` command should print no matches unless those strings appear in normal

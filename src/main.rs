@@ -1,5 +1,6 @@
 mod claude;
 mod cli;
+mod codex;
 mod config;
 mod debug;
 mod debug_log;
@@ -16,9 +17,12 @@ mod update;
 use clap::Parser;
 use cli::{Args, Commands};
 use error::{AppError, Result};
-use std::io::IsTerminal;
+use std::cmp::Reverse;
+use std::fs::File;
+use std::io::{BufRead, BufReader, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 fn main() {
     if let Err(e) = run() {
@@ -60,10 +64,18 @@ fn run() -> Result<()> {
     if let Some(command) = args.command {
         return match command {
             Commands::Update => update::run(),
-            Commands::ExportProjectMarkdown {
-                project_dir,
-                output_dir,
-            } => export_project_markdown(&project_dir, &output_dir),
+            Commands::Export { provider } => match provider {
+                cli::ExportProvider::Claude(export_args) => {
+                    export_project_markdown(&export_args.project_dir, &export_args.output_dir)
+                }
+                cli::ExportProvider::Codex(export_args) => codex::export_project_markdown(
+                    &export_args.project_dir,
+                    &export_args.output_dir,
+                ),
+            },
+            Commands::ExportProjectMarkdown(export_args) => {
+                export_project_markdown(&export_args.project_dir, &export_args.output_dir)
+            }
         };
     }
 
@@ -441,40 +453,55 @@ fn export_project_markdown(project_dir: &Path, output_dir: &Path) -> Result<()> 
             files.push((path, modified));
         }
     }
-    files.sort_by_key(|(_, modified)| *modified);
-
     let options = tui::export::ExportOptions {
         show_tools: false,
         show_thinking: false,
     };
 
+    let mut candidates = Vec::new();
+    for (path, modified) in files {
+        let conversation = history::process_conversation_file(path.clone(), Some(modified), None)?;
+        let activity_timestamp = last_claude_activity_timestamp(&path, modified)?;
+        candidates.push(ClaudeExportCandidate {
+            path,
+            conversation,
+            activity_timestamp,
+        });
+    }
+    candidates.sort_by_key(|candidate| Reverse(candidate.activity_timestamp));
+
     let mut written = 0usize;
-    for (idx, (path, modified)) in files.iter().enumerate() {
-        let content =
-            tui::export::generate_content(path, tui::export::ExportFormat::Markdown, options)
-                .map_err(AppError::Io)?;
+    for (idx, candidate) in candidates.iter().enumerate() {
+        let content = tui::export::generate_content(
+            &candidate.path,
+            tui::export::ExportFormat::Markdown,
+            options,
+        )
+        .map_err(AppError::Io)?;
         if content.trim().is_empty() {
             continue;
         }
 
-        let conversation = history::process_conversation_file(path.clone(), Some(*modified), None)?;
-        let stem = path
+        let stem = candidate
+            .path
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or("session");
-        let title = conversation
+        let title = candidate
+            .conversation
             .as_ref()
-            .and_then(|conv| {
-                conv.custom_title
+            .and_then(|conversation| {
+                conversation
+                    .custom_title
                     .as_deref()
-                    .or(conv.summary.as_deref())
-                    .or(Some(conv.preview.as_str()))
+                    .or(conversation.summary.as_deref())
+                    .or(Some(conversation.preview.as_str()))
             })
             .unwrap_or(stem);
-        let date = conversation
-            .as_ref()
-            .map(|conv| conv.timestamp.format("%Y-%m-%d-%H%M%S").to_string())
-            .unwrap_or_else(|| format!("{:03}", idx + 1));
+        let date = candidate
+            .activity_timestamp
+            .format("%Y-%m-%d-%H%M%S")
+            .to_string();
         let filename = format!("{:03}-{}-{}.md", idx + 1, date, sanitize_filename(title));
         let output_path = output_dir.join(filename);
         std::fs::write(&output_path, content).map_err(AppError::Io)?;
@@ -490,7 +517,47 @@ fn export_project_markdown(project_dir: &Path, output_dir: &Path) -> Result<()> 
     Ok(())
 }
 
-fn sanitize_filename(input: &str) -> String {
+struct ClaudeExportCandidate {
+    path: PathBuf,
+    conversation: Option<history::Conversation>,
+    activity_timestamp: chrono::DateTime<chrono::Local>,
+}
+
+fn last_claude_activity_timestamp(
+    path: &Path,
+    fallback_modified: SystemTime,
+) -> Result<chrono::DateTime<chrono::Local>> {
+    let file = File::open(path).map_err(AppError::Io)?;
+    let reader = BufReader::new(file);
+    let mut last_timestamp = None;
+
+    for line in reader.lines() {
+        let line = line.map_err(AppError::Io)?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_str::<claude::LogEntry>(&line) else {
+            continue;
+        };
+        let timestamp = match entry {
+            claude::LogEntry::User { timestamp, .. }
+            | claude::LogEntry::Assistant { timestamp, .. } => timestamp,
+            _ => None,
+        };
+        if let Some(timestamp) = timestamp
+            && let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&timestamp)
+        {
+            last_timestamp = Some(parsed.with_timezone(&chrono::Local));
+        }
+    }
+
+    Ok(
+        last_timestamp
+            .unwrap_or_else(|| chrono::DateTime::<chrono::Local>::from(fallback_modified)),
+    )
+}
+
+pub(crate) fn sanitize_filename(input: &str) -> String {
     let mut output = String::new();
     let mut previous_dash = false;
     for ch in input.chars() {
