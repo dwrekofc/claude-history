@@ -27,11 +27,17 @@ type CodexSession = {
 
 type CliOptions = {
   host: string;
-  port: number;
+  port?: number;
+  portStart: number;
   session?: string;
   projectDir: string;
   open: boolean;
   pollMs: number;
+};
+
+type CmuxLaunchContext = {
+  workspaceId?: string;
+  surfaceId?: string;
 };
 
 const md = new MarkdownIt({
@@ -63,7 +69,8 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
 export function parseArgs(argv = process.argv.slice(2)): CliOptions {
   const options: CliOptions = {
     host: "127.0.0.1",
-    port: Number(process.env.LIVE_CHAT_PORT || 4777),
+    port: process.env.LIVE_CHAT_PORT ? Number(process.env.LIVE_CHAT_PORT) : undefined,
+    portStart: Number(process.env.LIVE_CHAT_PORT_START || 4777),
     projectDir: process.cwd(),
     open: false,
     pollMs: 1200,
@@ -81,6 +88,11 @@ export function parseArgs(argv = process.argv.slice(2)): CliOptions {
       index += 1;
     } else if (arg.startsWith("--port=")) {
       options.port = Number(arg.slice("--port=".length));
+    } else if (arg === "--port-start" && next) {
+      options.portStart = Number(next);
+      index += 1;
+    } else if (arg.startsWith("--port-start=")) {
+      options.portStart = Number(arg.slice("--port-start=".length));
     } else if (arg === "--host" && next) {
       options.host = next;
       index += 1;
@@ -104,8 +116,11 @@ export function parseArgs(argv = process.argv.slice(2)): CliOptions {
     }
   }
 
-  if (!Number.isFinite(options.port) || options.port <= 0) {
+  if (options.port !== undefined && (!Number.isFinite(options.port) || options.port <= 0)) {
     throw new Error(`Invalid --port value: ${options.port}`);
+  }
+  if (!Number.isFinite(options.portStart) || options.portStart <= 0) {
+    throw new Error(`Invalid --port-start value: ${options.portStart}`);
   }
   if (!Number.isFinite(options.pollMs) || options.pollMs < 250) {
     throw new Error(`Invalid --poll-ms value: ${options.pollMs}`);
@@ -113,6 +128,17 @@ export function parseArgs(argv = process.argv.slice(2)): CliOptions {
 
   options.projectDir = resolve(options.projectDir);
   return options;
+}
+
+export async function findAvailablePort(
+  host: string,
+  startPort: number,
+  maxAttempts = 100,
+): Promise<number> {
+  for (let port = startPort; port < startPort + maxAttempts; port += 1) {
+    if (await canListen(host, port)) return port;
+  }
+  throw new Error(`No free port found from ${startPort} to ${startPort + maxAttempts - 1}`);
 }
 
 export async function resolveSessionPath(options: CliOptions): Promise<string> {
@@ -202,7 +228,15 @@ export function renderSessionHtml(session: CodexSession, projectDir = session.cw
       const rendered = md.render(linkLocalMarkdownPaths(turn.text, projectDir), { baseDir: projectDir });
       const timestamp = turn.timestamp ? escapeHtml(new Date(turn.timestamp).toLocaleTimeString()) : "";
       return `<article class="message ${turn.role}" data-index="${index}">
-  <header><span>${escapeHtml(turn.label)}</span><time>${timestamp}</time></header>
+  <header>
+    <div class="message-title"><span>${escapeHtml(turn.label)}</span><time>${timestamp}</time></div>
+    <button class="copy-message" type="button" data-copy-index="${index}" title="Copy raw message" aria-label="Copy raw message">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+        <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+      </svg>
+    </button>
+  </header>
   <div class="markdown-body">${rendered}</div>
 </article>`;
     })
@@ -374,20 +408,111 @@ async function cmuxCall(method: string, params: Record<string, unknown> = {}): P
   });
 }
 
+function canListen(host: string, port: number): Promise<boolean> {
+  return new Promise((resolvePort) => {
+    const server = Bun.serve({
+      hostname: host,
+      port,
+      fetch() {
+        return new Response("ok");
+      },
+      error() {
+        return new Response("error", { status: 500 });
+      },
+    });
+    server.stop();
+    resolvePort(true);
+  }).catch(() => false);
+}
+
 async function openInCmux(url: string): Promise<string> {
   if (!process.env.CMUX_SOCKET_PATH) {
     throw new Error("CMUX_SOCKET_PATH is not set");
   }
 
-  try {
-    await cmuxCall("browser.open_split", { url, direction: "right" });
-    return "browser.open_split";
-  } catch (openError) {
-    const surfaces = await cmuxCall("surface.list");
-    const browser = surfaces?.surfaces?.find((surface: any) => surface.type === "browser");
-    if (!browser?.id) throw openError;
-    await cmuxCall("browser.navigate", { surface_id: browser.id, url });
+  const context = getCmuxLaunchContext();
+  const existingBrowser = await findWorkspacePreviewBrowser(context);
+  if (existingBrowser) {
+    await cmuxCall("browser.navigate", { surface_id: existingBrowser, url });
     return "browser.navigate";
+  }
+
+  const targetedParams = {
+    url,
+    direction: "right",
+    ...(context.workspaceId ? { workspace_id: context.workspaceId } : {}),
+    ...(context.surfaceId ? { source_surface_id: context.surfaceId, surface_id: context.surfaceId } : {}),
+  };
+
+  try {
+    const result = await cmuxCall("browser.open_split", targetedParams);
+    if (isCmuxOpenResultInLaunchWorkspace(result, context)) {
+      return "browser.open_split";
+    }
+    if (!context.surfaceId) {
+      return "browser.open_split";
+    }
+    await closeMisplacedBrowser(result);
+    throw new Error("CMUX opened the browser outside the launch workspace");
+  } catch {
+    if (!context.surfaceId) {
+      await cmuxCall("browser.open_split", { url, direction: "right" });
+      return "browser.open_split";
+    }
+    await openSplitFromLaunchSurface(url, context.surfaceId);
+    return "browser.open_split";
+  }
+}
+
+function getCmuxLaunchContext(): CmuxLaunchContext {
+  return {
+    workspaceId: process.env.CMUX_WORKSPACE_ID,
+    surfaceId: process.env.CMUX_SURFACE_ID,
+  };
+}
+
+async function findWorkspacePreviewBrowser(context: CmuxLaunchContext): Promise<string | undefined> {
+  if (!context.workspaceId) return undefined;
+  const tree = await cmuxCall("system.tree");
+  const workspace = tree?.windows
+    ?.flatMap((window: any) => window.workspaces || [])
+    ?.find((candidate: any) => candidate.id === context.workspaceId);
+  if (!workspace) return undefined;
+
+  const browsers = workspace.panes
+    ?.flatMap((pane: any) => pane.surfaces || [])
+    ?.filter((surface: any) => surface.type === "browser" && surface.id) || [];
+  const preview = browsers.find((surface: any) => {
+    const title = String(surface.title || "");
+    const url = String(surface.url || "");
+    return title.includes("Codex Live Markdown") || /^http:\/\/127\.0\.0\.1:47\d+\//.test(url);
+  });
+  return preview?.id;
+}
+
+function isCmuxOpenResultInLaunchWorkspace(result: any, context: CmuxLaunchContext): boolean {
+  return !context.workspaceId || result?.workspace_id === context.workspaceId;
+}
+
+async function closeMisplacedBrowser(result: any): Promise<void> {
+  const surfaceId = result?.surface_id;
+  if (!surfaceId) return;
+  try {
+    await cmuxCall("surface.close", { surface_id: surfaceId });
+  } catch {
+    // Best effort cleanup only.
+  }
+}
+
+async function openSplitFromLaunchSurface(url: string, sourceSurfaceId: string): Promise<void> {
+  const active = await cmuxCall("system.identify").catch(() => undefined);
+  const restoreSurfaceId = active?.focused?.surface_id;
+
+  await cmuxCall("surface.focus", { surface_id: sourceSurfaceId });
+  await cmuxCall("browser.open_split", { url, direction: "right" });
+
+  if (restoreSurfaceId && restoreSurfaceId !== sourceSurfaceId) {
+    await cmuxCall("surface.focus", { surface_id: restoreSurfaceId }).catch(() => undefined);
   }
 }
 
@@ -427,6 +552,7 @@ function appHtml(pollMs: number): string {
     let pinBottom = true;
     let rawMode = false;
     let lastSignature = "";
+    let rawMessages = [];
 
     pause.addEventListener("click", () => {
       paused = !paused;
@@ -444,6 +570,44 @@ function appHtml(pollMs: number): string {
       lastSignature = "";
       refresh();
     });
+    content.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-copy-index]");
+      if (!button) return;
+      event.preventDefault();
+      await copyMessage(Number(button.dataset.copyIndex), button);
+    });
+    content.addEventListener("contextmenu", async (event) => {
+      const message = event.target.closest(".message[data-index]");
+      if (!message) return;
+      event.preventDefault();
+      await copyMessage(Number(message.dataset.index));
+    });
+
+    async function copyMessage(index, button) {
+      const text = rawMessages[index]?.text || "";
+      if (!text) return;
+      await writeClipboard(text);
+      meta.textContent = "Copied raw message " + (index + 1) + " to clipboard";
+      if (button) {
+        button.classList.add("copied");
+        window.setTimeout(() => button.classList.remove("copied"), 900);
+      }
+    }
+
+    async function writeClipboard(text) {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
 
     async function refresh() {
       if (paused) return;
@@ -453,6 +617,7 @@ function appHtml(pollMs: number): string {
       const signature = data.modifiedMs + ":" + data.turnCount + ":" + rawMode;
       if (signature === lastSignature) return;
       lastSignature = signature;
+      rawMessages = data.turns || [];
       meta.textContent = data.sessionPath + " | " + data.turnCount + " messages";
       content.innerHTML = rawMode
         ? "<article class='message'><div class='markdown-body'><pre><code></code></pre></div></article>"
@@ -558,6 +723,7 @@ function css(): string {
     .message > header {
       display: flex;
       justify-content: space-between;
+      align-items: flex-start;
       gap: 12px;
       padding: 8px 14px 0;
       border-bottom: 0;
@@ -565,6 +731,41 @@ function css(): string {
       font-size: 12px;
       font-weight: 700;
       text-transform: uppercase;
+    }
+    .message-title {
+      display: flex;
+      min-width: 0;
+      gap: 12px;
+      align-items: center;
+    }
+    .message-title time { white-space: nowrap; }
+    .copy-message {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      flex: 0 0 auto;
+      padding: 0;
+      border: 0;
+      border-radius: 14px;
+      background: color-mix(in srgb, currentColor 10%, transparent);
+      color: currentColor;
+      opacity: .72;
+      cursor: pointer;
+    }
+    .copy-message:hover,
+    .copy-message.copied {
+      opacity: 1;
+      background: color-mix(in srgb, currentColor 18%, transparent);
+    }
+    .copy-message svg {
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
     .markdown-body { padding: 12px 14px 14px; overflow-wrap: anywhere; }
     .markdown-body > :first-child { margin-top: 0; }
@@ -622,11 +823,12 @@ function css(): string {
 async function main() {
   const options = parseArgs();
   const sessionPath = await resolveSessionPath(options);
-  const url = `http://${options.host}:${options.port}/`;
+  const port = options.port ?? (await findAvailablePort(options.host, options.portStart));
+  const url = `http://${options.host}:${port}/`;
 
   const server = Bun.serve({
     hostname: options.host,
-    port: options.port,
+    port,
     async fetch(request) {
       const requestUrl = new URL(request.url);
       if (requestUrl.pathname === "/api/session") {
@@ -638,6 +840,12 @@ async function main() {
             sessionPath: session.path,
             modifiedMs: session.modifiedMs,
             turnCount: session.turns.length,
+            turns: session.turns.map((turn) => ({
+              role: turn.role,
+              label: turn.label,
+              text: turn.text,
+              timestamp: turn.timestamp,
+            })),
             markdown: renderSessionMarkdown(session),
             html: renderSessionHtml(session, session.cwd || options.projectDir),
           });

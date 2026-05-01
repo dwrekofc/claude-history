@@ -112,16 +112,17 @@ The server:
 
 - finds the current rollout from `CODEX_THREAD_ID`, falling back to the newest
   Codex session for the current project
-- serves a live Markdown-rendered chat preview on localhost
-- opens the preview in the CMUX split browser via `browser.open_split` when CMUX
-  is available
+- serves a live Markdown-rendered chat preview on the first free localhost port
+  starting at `4777`
+- opens the preview in the launching CMUX workspace using `CMUX_WORKSPACE_ID`
+  and `CMUX_SURFACE_ID` when CMUX is available
 - rewrites local `.md` file paths and Markdown links in the rendered chat so
   clicking them opens a rendered document view in the browser split
 
 Useful options:
 
 ```sh
-bun --cwd /Volumes/CORE-02/projects/claude-history run live -- --port 4778
+bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --port-start 4900
 bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --session /path/to/rollout.jsonl
 bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --project-dir "$PWD"
 ```

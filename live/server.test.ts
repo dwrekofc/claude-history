@@ -3,12 +3,27 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  parseArgs,
   linkLocalMarkdownPaths,
   parseCodexSession,
   renderMarkdownDocumentHtml,
   renderSessionHtml,
   renderSessionMarkdown,
 } from "./server";
+
+test("defaults to automatic port selection", () => {
+  const options = parseArgs([]);
+
+  expect(options.port).toBeUndefined();
+  expect(options.portStart).toBe(4777);
+});
+
+test("keeps explicit port overrides", () => {
+  const options = parseArgs(["--port", "4999", "--port-start", "4888"]);
+
+  expect(options.port).toBe(4999);
+  expect(options.portStart).toBe(4888);
+});
 
 test("parses only chat messages from a Codex rollout", async () => {
   const dir = await mkdtemp(join(tmpdir(), "claude-history-live-"));
@@ -68,6 +83,8 @@ test("parses only chat messages from a Codex rollout", async () => {
   expect(html).toContain("<table>");
   expect(html).toContain("<strong>markdown</strong>");
   expect(html).toContain("/file?path=");
+  expect(html).toContain('class="copy-message"');
+  expect(html).toContain('data-copy-index="0"');
 
   await rm(dir, { recursive: true, force: true });
 });

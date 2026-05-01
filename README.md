@@ -258,10 +258,11 @@ browser Markdown with tables:
 bun run live:cmux
 ```
 
-This finds the active Codex rollout from `CODEX_THREAD_ID`, serves it on
-localhost, and opens it in CMUX's split browser. Clicking local `.md` paths or
-Markdown links in the rendered chat opens those files as rendered documents in
-the browser split.
+This finds the active Codex rollout from `CODEX_THREAD_ID`, serves it on the
+first free localhost port starting at `4777`, and opens it in the CMUX split
+browser for the launching workspace. Clicking local `.md` paths or Markdown
+links in the rendered chat opens those files as rendered documents in the
+browser split.
 
 Agent prompt template:
 

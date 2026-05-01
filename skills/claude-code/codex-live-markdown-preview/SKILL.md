@@ -22,18 +22,19 @@ The preview server:
 - uses `CODEX_THREAD_ID` when present
 - otherwise falls back to the newest Codex session for the current project, then
   the newest Codex session overall
-- serves the rendered chat at `http://127.0.0.1:4777/` by default
-- opens or reuses the CMUX split browser via `browser.open_split`
+- serves the rendered chat on the first free localhost port starting at `4777`
+- opens or reuses the CMUX split browser in the launching workspace using
+  `CMUX_WORKSPACE_ID` and `CMUX_SURFACE_ID`
 - renders GitHub-flavored Markdown tables, code blocks, links, and inline styles
 - rewrites local `.md` file paths and Markdown links so clicking them opens a
   rendered document view in the browser split
 
 ## Useful Options
 
-Use a different port:
+Start scanning for a free port from a different base:
 
 ```sh
-bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --port 4778
+bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --port-start 4900
 ```
 
 Preview a specific Codex rollout file:
@@ -48,12 +49,8 @@ Preview the newest Codex session for a project:
 bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --project-dir "$PWD"
 ```
 
-## If The Server Is Already Running
-
-If the port is occupied, either use another port or stop the old listener:
+Force a specific port only when the user explicitly asks for one:
 
 ```sh
-lsof -tiTCP:4777 -sTCP:LISTEN | xargs kill
+bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --port 4778
 ```
-
-Then start the preview again.
