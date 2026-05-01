@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 claude_home="${CLAUDE_CONFIG_DIR:-"$HOME/.claude"}"
 codex_home="${CODEX_HOME:-"$HOME/.codex"}"
+user_bin="$HOME/.local/bin"
 
 install_skill() {
   local source_dir="$1"
@@ -31,5 +32,11 @@ install_skill \
 install_skill \
   "$repo_root/skills/codex/codex-live-markdown-preview" \
   "$codex_home/skills/codex-live-markdown-preview"
+
+mkdir -p "$user_bin"
+install -m 755 "$repo_root/scripts/codex-live-preview" "$user_bin/codex-live-preview"
+printf 'Installed %s\n' "$user_bin/codex-live-preview"
+ln -sf "$user_bin/codex-live-preview" "$user_bin/clivp"
+printf 'Installed %s\n' "$user_bin/clivp"
 
 printf '\nRestart Claude Code or Codex CLI if the skill list is already loaded.\n'

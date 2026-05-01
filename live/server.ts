@@ -53,6 +53,15 @@ const md = new MarkdownIt({
   },
 });
 
+md.renderer.rules.fence = (tokens, idx) => {
+  const token = tokens[idx];
+  const info = token.info ? md.utils.unescapeAll(token.info).trim() : "";
+  const language = info.split(/\s+/g)[0] || "";
+  return renderCodeBlock(token.content, language);
+};
+
+md.renderer.rules.code_block = (tokens, idx) => renderCodeBlock(tokens[idx].content, "");
+
 md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   const token = tokens[idx];
   const href = token.attrGet("href");
@@ -65,6 +74,23 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   }
   return self.renderToken(tokens, idx, options);
 };
+
+function renderCodeBlock(code: string, language: string): string {
+  const lang = language && hljs.getLanguage(language) ? language : "";
+  const highlighted = lang
+    ? hljs.highlight(code, { language: lang }).value
+    : md.utils.escapeHtml(code);
+  const label = lang ? escapeHtml(lang) : "code";
+  return `<div class="code-block">
+  <div class="code-toolbar"><span>${label}</span><button class="copy-code" type="button" title="Copy code" aria-label="Copy code">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+      <path d="M5 15V7a2 2 0 0 1 2-2h8"></path>
+    </svg>
+  </button></div>
+  <pre class="hljs"><code>${highlighted}</code></pre>
+</div>`;
+}
 
 export function parseArgs(argv = process.argv.slice(2)): CliOptions {
   const options: CliOptions = {
@@ -571,6 +597,16 @@ function appHtml(pollMs: number): string {
       refresh();
     });
     content.addEventListener("click", async (event) => {
+      const codeButton = event.target.closest(".copy-code");
+      if (codeButton) {
+        event.preventDefault();
+        const block = codeButton.closest(".code-block");
+        const text = block?.querySelector("code")?.innerText || "";
+        if (!text) return;
+        await writeClipboard(text.replace(/\\n$/, ""));
+        markCopied(codeButton, "Copied code block to clipboard");
+        return;
+      }
       const button = event.target.closest("[data-copy-index]");
       if (!button) return;
       event.preventDefault();
@@ -587,11 +623,14 @@ function appHtml(pollMs: number): string {
       const text = rawMessages[index]?.text || "";
       if (!text) return;
       await writeClipboard(text);
-      meta.textContent = "Copied raw message " + (index + 1) + " to clipboard";
-      if (button) {
-        button.classList.add("copied");
-        window.setTimeout(() => button.classList.remove("copied"), 900);
-      }
+      if (button) markCopied(button, "Copied raw message " + (index + 1) + " to clipboard");
+      else meta.textContent = "Copied raw message " + (index + 1) + " to clipboard";
+    }
+
+    function markCopied(button, message) {
+      meta.textContent = message;
+      button.classList.add("copied");
+      window.setTimeout(() => button.classList.remove("copied"), 900);
     }
 
     async function writeClipboard(text) {
@@ -739,7 +778,8 @@ function css(): string {
       align-items: center;
     }
     .message-title time { white-space: nowrap; }
-    .copy-message {
+    .copy-message,
+    .copy-code {
       display: grid;
       width: 28px;
       height: 28px;
@@ -754,11 +794,14 @@ function css(): string {
       cursor: pointer;
     }
     .copy-message:hover,
-    .copy-message.copied {
+    .copy-message.copied,
+    .copy-code:hover,
+    .copy-code.copied {
       opacity: 1;
       background: color-mix(in srgb, currentColor 18%, transparent);
     }
-    .copy-message svg {
+    .copy-message svg,
+    .copy-code svg {
       width: 15px;
       height: 15px;
       fill: none;
@@ -794,11 +837,31 @@ function css(): string {
       background: color-mix(in srgb, currentColor 10%, transparent);
       text-align: left;
     }
+    .code-block {
+      overflow: hidden;
+      margin: 12px 0;
+      border-radius: 6px;
+      background: var(--code);
+    }
+    .code-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-height: 34px;
+      padding: 4px 8px 4px 12px;
+      color: #a1a1aa;
+      border-bottom: 1px solid rgb(255 255 255 / .08);
+      font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .copy-code {
+      background: rgb(255 255 255 / .07);
+      color: #f8fafc;
+    }
     .markdown-body pre {
       overflow-x: auto;
-      margin: 12px 0;
+      margin: 0;
       padding: 12px;
-      border-radius: 6px;
       background: var(--code);
       color: #f8fafc;
     }

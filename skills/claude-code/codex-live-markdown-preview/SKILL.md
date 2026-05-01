@@ -14,12 +14,13 @@ JSONL transcripts.
 Run from any project:
 
 ```sh
-bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux
+clivp
 ```
 
 The preview server:
 
 - uses `CODEX_THREAD_ID` when present
+- runs under a per-thread tmux session named `codex-live-preview-*`
 - otherwise falls back to the newest Codex session for the current project, then
   the newest Codex session overall
 - serves the rendered chat on the first free localhost port starting at `4777`
@@ -34,23 +35,33 @@ The preview server:
 Start scanning for a free port from a different base:
 
 ```sh
-bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --port-start 4900
+clivp start --port-start 4900
 ```
 
 Preview a specific Codex rollout file:
 
 ```sh
-bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --session /path/to/rollout.jsonl
+clivp start --session /path/to/rollout.jsonl
 ```
 
 Preview the newest Codex session for a project:
 
 ```sh
-bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --project-dir "$PWD"
+clivp start --project-dir "$PWD"
 ```
 
 Force a specific port only when the user explicitly asks for one:
 
 ```sh
-bun --cwd /Volumes/CORE-02/projects/claude-history run live:cmux -- --port 4778
+clivp start --port 4778
+```
+
+## Manage Running Previews
+
+```sh
+clivp list
+clivp stop
+clivp stop-all
+clivp logs
+clivp cleanup
 ```

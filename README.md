@@ -255,7 +255,7 @@ Use the Bun preview server when you want the active Codex CLI chat rendered as
 browser Markdown with tables:
 
 ```sh
-bun run live:cmux
+clivp
 ```
 
 This finds the active Codex rollout from `CODEX_THREAD_ID`, serves it on the
@@ -263,6 +263,15 @@ first free localhost port starting at `4777`, and opens it in the CMUX split
 browser for the launching workspace. Clicking local `.md` paths or Markdown
 links in the rendered chat opens those files as rendered documents in the
 browser split.
+
+The command is tmux-managed, so you can inspect and stop running previews:
+
+```sh
+clivp list
+clivp stop
+clivp stop-all
+clivp logs
+```
 
 Agent prompt template:
 

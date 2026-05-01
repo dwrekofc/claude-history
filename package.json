@@ -5,6 +5,7 @@
   "scripts": {
     "live": "bun run live/server.ts",
     "live:cmux": "bun run live/server.ts --open",
+    "preview": "scripts/codex-live-preview start",
     "test:live": "bun test live"
   },
   "dependencies": {

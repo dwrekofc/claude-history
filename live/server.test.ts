@@ -65,7 +65,7 @@ test("parses only chat messages from a Codex rollout", async () => {
         payload: {
           type: "message",
           role: "assistant",
-          content: [{ type: "output_text", text: "Done with **markdown**." }],
+          content: [{ type: "output_text", text: "Done with **markdown**.\n\n```sh\ncodex-live-preview start\n```" }],
         },
       }),
     ].join("\n"),
@@ -85,6 +85,8 @@ test("parses only chat messages from a Codex rollout", async () => {
   expect(html).toContain("/file?path=");
   expect(html).toContain('class="copy-message"');
   expect(html).toContain('data-copy-index="0"');
+  expect(html).toContain('class="copy-code"');
+  expect(html).toContain("codex-live-preview start");
 
   await rm(dir, { recursive: true, force: true });
 });

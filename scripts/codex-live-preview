@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="/Volumes/CORE-02/projects/claude-history"
+state_dir="${XDG_STATE_HOME:-"$HOME/.local/state"}/claude-history/live-preview"
+mkdir -p "$state_dir"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  codex-live-preview [start] [--session FILE] [--project-dir DIR] [--port-start PORT] [--port PORT]
+  codex-live-preview list
+  codex-live-preview stop
+  codex-live-preview stop-all
+  codex-live-preview logs [SESSION_NAME]
+  codex-live-preview cleanup
+
+Starts a tmux-managed Codex live Markdown preview for the current session.
+USAGE
+}
+
+require_tmux() {
+  if ! command -v tmux >/dev/null 2>&1; then
+    echo "tmux is required for codex-live-preview management" >&2
+    exit 1
+  fi
+}
+
+session_key() {
+  local raw="${CODEX_THREAD_ID:-}"
+  if [[ -z "$raw" ]]; then
+    raw="${CMUX_WORKSPACE_ID:-local}-${CMUX_SURFACE_ID:-surface}-$(basename "$PWD")"
+  fi
+  printf '%s' "$raw" | tr -c 'A-Za-z0-9_' '-' | cut -c1-56
+}
+
+session_name() {
+  printf 'codex-live-preview-%s' "$(session_key)"
+}
+
+state_file() {
+  local name="$1"
+  local suffix="$2"
+  printf '%s/%s.%s' "$state_dir" "$name" "$suffix"
+}
+
+is_tmux_session() {
+  tmux has-session -t "$1" 2>/dev/null
+}
+
+print_log_summary() {
+  local log="$1"
+  if [[ -f "$log" ]]; then
+    sed -n '1,8p' "$log"
+  fi
+}
+
+start_preview() {
+  require_tmux
+
+  local name
+  name="$(session_name)"
+  local log run meta
+  log="$(state_file "$name" log)"
+  run="$(state_file "$name" run.sh)"
+  meta="$(state_file "$name" meta)"
+
+  local poll_ms="700"
+  local port=""
+  local port_start="4777"
+  local session_path=""
+  local project_dir=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session)
+        session_path="${2:-}"
+        shift 2
+        ;;
+      --session=*)
+        session_path="${1#--session=}"
+        shift
+        ;;
+      --project-dir)
+        project_dir="${2:-}"
+        shift 2
+        ;;
+      --project-dir=*)
+        project_dir="${1#--project-dir=}"
+        shift
+        ;;
+      --port-start)
+        port_start="${2:-}"
+        shift 2
+        ;;
+      --port-start=*)
+        port_start="${1#--port-start=}"
+        shift
+        ;;
+      --port)
+        port="${2:-}"
+        shift 2
+        ;;
+      --port=*)
+        port="${1#--port=}"
+        shift
+        ;;
+      --poll-ms)
+        poll_ms="${2:-}"
+        shift 2
+        ;;
+      --poll-ms=*)
+        poll_ms="${1#--poll-ms=}"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if is_tmux_session "$name"; then
+    tmux kill-session -t "$name"
+  fi
+
+  : > "$log"
+  {
+    printf 'name=%s\n' "$name"
+    printf 'created_at=%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    printf 'cwd=%s\n' "$PWD"
+    printf 'cmux_workspace_id=%s\n' "${CMUX_WORKSPACE_ID:-}"
+    printf 'cmux_surface_id=%s\n' "${CMUX_SURFACE_ID:-}"
+    printf 'codex_thread_id=%s\n' "${CODEX_THREAD_ID:-}"
+    printf 'log=%s\n' "$log"
+  } > "$meta"
+
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'cd %q\n' "$repo_root"
+    printf 'export CMUX_SOCKET_PATH=%q\n' "${CMUX_SOCKET_PATH:-}"
+    printf 'export CMUX_WORKSPACE_ID=%q\n' "${CMUX_WORKSPACE_ID:-}"
+    printf 'export CMUX_SURFACE_ID=%q\n' "${CMUX_SURFACE_ID:-}"
+    printf 'export CODEX_THREAD_ID=%q\n' "${CODEX_THREAD_ID:-}"
+    printf 'exec bun run live/server.ts --open --poll-ms %q --port-start %q' "$poll_ms" "$port_start"
+    if [[ -n "$port" ]]; then
+      printf ' --port %q' "$port"
+    fi
+    if [[ -n "$session_path" ]]; then
+      printf ' --session %q' "$session_path"
+    fi
+    if [[ -n "$project_dir" ]]; then
+      printf ' --project-dir %q' "$project_dir"
+    fi
+    printf ' > %q 2>&1\n' "$log"
+  } > "$run"
+  chmod +x "$run"
+
+  tmux new-session -d -s "$name" "$run"
+
+  for _ in {1..25}; do
+    if grep -q 'Live Codex Markdown:' "$log" 2>/dev/null; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  print_log_summary "$log"
+  printf 'Managed by tmux session: %s\n' "$name"
+}
+
+list_previews() {
+  require_tmux
+  local sessions
+  sessions="$(tmux ls 2>/dev/null | awk -F: '/^codex-live-preview-/ {print $1}' || true)"
+  if [[ -z "$sessions" ]]; then
+    echo "No live preview tmux sessions."
+    return
+  fi
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    local log meta url
+    log="$(state_file "$name" log)"
+    meta="$(state_file "$name" meta)"
+    url="$(sed -n 's/^Live Codex Markdown: //p' "$log" 2>/dev/null | tail -1)"
+    printf '%s\t%s\n' "$name" "${url:-starting}"
+    [[ -f "$meta" ]] && sed 's/^/  /' "$meta"
+  done <<< "$sessions"
+}
+
+stop_preview() {
+  require_tmux
+  local name="${1:-$(session_name)}"
+  if is_tmux_session "$name"; then
+    tmux kill-session -t "$name"
+    echo "Stopped $name"
+  else
+    echo "No tmux session found: $name"
+  fi
+}
+
+stop_all() {
+  require_tmux
+  local sessions
+  sessions="$(tmux ls 2>/dev/null | awk -F: '/^codex-live-preview-/ {print $1}' || true)"
+  if [[ -z "$sessions" ]]; then
+    echo "No live preview tmux sessions."
+    return
+  fi
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    tmux kill-session -t "$name"
+    echo "Stopped $name"
+  done <<< "$sessions"
+}
+
+show_logs() {
+  local name="${1:-$(session_name)}"
+  local log
+  log="$(state_file "$name" log)"
+  if [[ ! -f "$log" ]]; then
+    echo "No log found: $log" >&2
+    exit 1
+  fi
+  cat "$log"
+}
+
+cleanup_state() {
+  require_tmux
+  local file name
+  find "$state_dir" -type f -name 'codex-live-preview-*.*' -print | while IFS= read -r file; do
+    name="$(basename "$file" | sed -E 's/\.(log|run\.sh|meta)$//')"
+    if ! is_tmux_session "$name"; then
+      rm -f "$state_dir/$name.log" "$state_dir/$name.run.sh" "$state_dir/$name.meta"
+      echo "Removed stale state for $name"
+    fi
+  done
+}
+
+command="${1:-start}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "$command" in
+  start)
+    start_preview "$@"
+    ;;
+  list)
+    list_previews
+    ;;
+  stop)
+    stop_preview "$@"
+    ;;
+  stop-all)
+    stop_all
+    ;;
+  logs)
+    show_logs "$@"
+    ;;
+  cleanup)
+    cleanup_state
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: $command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
