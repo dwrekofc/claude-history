@@ -21,7 +21,15 @@ install_skill \
   "$claude_home/skills/claude-history-export"
 
 install_skill \
+  "$repo_root/skills/claude-code/codex-live-markdown-preview" \
+  "$claude_home/skills/codex-live-markdown-preview"
+
+install_skill \
   "$repo_root/skills/codex/claude-history-export" \
   "$codex_home/skills/claude-history-export"
+
+install_skill \
+  "$repo_root/skills/codex/codex-live-markdown-preview" \
+  "$codex_home/skills/codex-live-markdown-preview"
 
 printf '\nRestart Claude Code or Codex CLI if the skill list is already loaded.\n'

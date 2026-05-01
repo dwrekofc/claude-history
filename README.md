@@ -249,6 +249,20 @@ metadata, and usage metadata are omitted. This makes the commands suitable for
 handing prior project context to another agent without leaking terminal/tool
 noise.
 
+### Live Codex Markdown preview
+
+Use the Bun preview server when you want the active Codex CLI chat rendered as
+browser Markdown with tables:
+
+```sh
+bun run live:cmux
+```
+
+This finds the active Codex rollout from `CODEX_THREAD_ID`, serves it on
+localhost, and opens it in CMUX's split browser. Clicking local `.md` paths or
+Markdown links in the rendered chat opens those files as rendered documents in
+the browser split.
+
 Agent prompt template:
 
 ```text
