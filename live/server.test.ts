@@ -93,21 +93,50 @@ test("parses only chat messages from a Codex rollout", async () => {
 
 test("turns local markdown paths into preview links", () => {
   const linked = linkLocalMarkdownPaths(
-    "Read customer-reference-db/docs/manifest.md and /tmp/audit.md.",
+    "Read README.md, customer-reference-db/docs/manifest.md, ./docs/local.md, docs/relative.md and /tmp/audit.md.",
     "/repo",
   );
 
+  expect(linked).toContain("[README.md](/file?path=");
   expect(linked).toContain("[customer-reference-db/docs/manifest.md](/file?path=");
+  expect(linked).toContain("[./docs/local.md](/file?path=");
+  expect(linked).toContain("[docs/relative.md](/file?path=");
   expect(linked).toContain("[/tmp/audit.md](/file?path=");
 });
 
 test("rewrites markdown links that point to local markdown files", () => {
   const html = renderMarkdownDocumentHtml(
-    "Open [the manifest](docs/manifest.md) and [absolute](/tmp/audit.md).",
+    "Open [the manifest](docs/manifest.md), [line](docs/manifest.md:111), and [absolute](/tmp/audit.md).",
     "/repo",
   );
 
-  expect(html).toContain('href="/file?path=%2Frepo%2Fdocs%2Fmanifest.md"');
-  expect(html).toContain('href="/file?path=%2Ftmp%2Faudit.md"');
+  expect(html).toContain('href="/file?path=%2Frepo%2Fdocs%2Fmanifest.md&amp;href=docs%2Fmanifest.md"');
+  expect(html).toContain('href="/file?path=%2Frepo%2Fdocs%2Fmanifest.md&amp;href=docs%2Fmanifest.md%3A111#L111"');
+  expect(html).toContain('href="/file?path=%2Ftmp%2Faudit.md&amp;href=%2Ftmp%2Faudit.md"');
   expect(html).toContain('target="_blank"');
+});
+
+test("auto-links local markdown paths in normal markdown text", () => {
+  const html = renderMarkdownDocumentHtml(
+    "Read README.md, docs/manifest.md:111, ./docs/local.md, and /tmp/audit.md.",
+    "/repo",
+  );
+
+  expect(html).toContain('href="/file?path=%2Frepo%2FREADME.md&amp;href=README.md"');
+  expect(html).toContain('href="/file?path=%2Frepo%2Fdocs%2Fmanifest.md&amp;href=docs%2Fmanifest.md%3A111#L111"');
+  expect(html).toContain('href="/file?path=%2Frepo%2Fdocs%2Flocal.md&amp;href=.%2Fdocs%2Flocal.md"');
+  expect(html).toContain('href="/file?path=%2Ftmp%2Faudit.md&amp;href=%2Ftmp%2Faudit.md"');
+});
+
+test("does not auto-link markdown paths inside code", () => {
+  const html = renderMarkdownDocumentHtml(
+    "Inline `README.md` stays code.\n\n```sh\ncat docs/manifest.md\n```\n\nBut docs/linked.md links.",
+    "/repo",
+  );
+
+  expect(html).toContain("<code>README.md</code>");
+  expect(html).toContain("docs/manifest.md");
+  expect(html).not.toContain('href="/file?path=%2Frepo%2FREADME.md');
+  expect(html).not.toContain('href="/file?path=%2Frepo%2Fdocs%2Fmanifest.md');
+  expect(html).toContain('href="/file?path=%2Frepo%2Fdocs%2Flinked.md&amp;href=docs%2Flinked.md"');
 });

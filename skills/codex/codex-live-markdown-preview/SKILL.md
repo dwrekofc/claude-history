@@ -21,11 +21,12 @@ The preview server:
 - finds the current Codex rollout from `CODEX_THREAD_ID`
 - runs under a per-thread tmux session named `codex-live-preview-*`
 - serves the rendered chat on the first free localhost port starting at `4777`
-- opens or reuses the CMUX split browser in the launching workspace using
-  `CMUX_WORKSPACE_ID` and `CMUX_SURFACE_ID`
+- registers with a per-workspace manager named `codex-live-preview-manager-*`
+  that opens or reuses one CMUX split browser and switches it to the active
+  registered chat
 - renders GitHub-flavored Markdown tables, code blocks, links, and inline styles
 - rewrites local `.md` file paths and Markdown links so clicking them opens a
-  rendered document view in the browser split
+  rendered document view, without rewriting code blocks
 
 ## Useful Options
 
@@ -58,7 +59,9 @@ clivp start --port 4778
 ```sh
 clivp list
 clivp stop
+clivp stop-workspace
 clivp stop-all
 clivp logs
+clivp workspace-logs
 clivp cleanup
 ```

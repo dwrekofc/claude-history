@@ -2,7 +2,7 @@ import { createConnection } from "node:net";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { extname, isAbsolute, join, resolve } from "node:path";
+import { dirname, extname, isAbsolute, join, resolve } from "node:path";
 import MarkdownIt from "markdown-it";
 import hljs from "highlight.js";
 
@@ -74,6 +74,14 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
   }
   return self.renderToken(tokens, idx, options);
 };
+
+md.core.ruler.after("inline", "local_markdown_path_links", (state) => {
+  const baseDir = state.env?.baseDir || process.cwd();
+  for (const blockToken of state.tokens) {
+    if (blockToken.type !== "inline" || !blockToken.children) continue;
+    blockToken.children = linkLocalMarkdownTextTokens(blockToken.children, baseDir, state.Token);
+  }
+});
 
 function renderCodeBlock(code: string, language: string): string {
   const lang = language && hljs.getLanguage(language) ? language : "";
@@ -245,13 +253,13 @@ export function renderSessionMarkdown(session: CodexSession): string {
 }
 
 export function renderMarkdownDocumentHtml(content: string, baseDir: string): string {
-  return md.render(linkLocalMarkdownPaths(content, baseDir), { baseDir });
+  return md.render(content, { baseDir });
 }
 
 export function renderSessionHtml(session: CodexSession, projectDir = session.cwd || process.cwd()): string {
   return session.turns
     .map((turn, index) => {
-      const rendered = md.render(linkLocalMarkdownPaths(turn.text, projectDir), { baseDir: projectDir });
+      const rendered = md.render(turn.text, { baseDir: projectDir });
       const timestamp = turn.timestamp ? escapeHtml(new Date(turn.timestamp).toLocaleTimeString()) : "";
       return `<article class="message ${turn.role}" data-index="${index}">
   <header>
@@ -270,30 +278,117 @@ export function renderSessionHtml(session: CodexSession, projectDir = session.cw
 }
 
 export function linkLocalMarkdownPaths(text: string, baseDir: string): string {
-  const pathPattern = /(^|[\s(])((?:\/[^\s)<>]+|(?:\.{1,2}\/)?[A-Za-z0-9._@-][^\s)<>]*?)\.md)(?=[:.,;!?)]?(\s|$))/gm;
-  return text.replace(pathPattern, (match, prefix: string, rawPath: string) => {
-    if (match.includes("](") || rawPath.startsWith("http://") || rawPath.startsWith("https://")) {
-      return match;
-    }
-    const cleanPath = rawPath.replace(/[.,;!?)]$/, "");
-    const absolute = isAbsolute(cleanPath) ? cleanPath : resolve(baseDir, cleanPath);
-    const href = `/file?path=${encodeURIComponent(absolute)}`;
-    return `${prefix}[${cleanPath}](${href})`;
-  });
+  return splitLocalMarkdownPaths(text).map((part) => {
+    if (typeof part === "string") return part;
+    return `[${part.path}](${normalizeLocalMarkdownHref(part.path, baseDir)})${part.trailing}`;
+  }).join("");
 }
 
 function normalizeLocalMarkdownHref(href: string, baseDir: string): string {
   if (href.startsWith("/file?path=")) return href;
   if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("#")) return href;
 
-  const [pathPart, hashPart] = href.split("#", 2);
-  const decodedPath = decodeURIComponent(pathPart);
-  const isMarkdown = [".md", ".markdown"].includes(extname(decodedPath).toLowerCase());
-  if (!isMarkdown) return href;
+  const parsed = resolveLocalMarkdownReference(href, baseDir);
+  if (!parsed) return href;
 
-  const absolute = isAbsolute(decodedPath) ? decodedPath : resolve(baseDir, decodedPath);
-  const hash = hashPart ? `#${encodeURIComponent(hashPart)}` : "";
-  return `/file?path=${encodeURIComponent(absolute)}${hash}`;
+  const hash = parsed.hash ? `#${encodeURIComponent(parsed.hash)}` : "";
+  return `/file?path=${encodeURIComponent(parsed.absolute)}&href=${encodeURIComponent(href)}${hash}`;
+}
+
+type LocalMarkdownPathPart = string | { path: string; trailing: string };
+
+function linkLocalMarkdownTextTokens(tokens: any[], baseDir: string, Token: any): any[] {
+  const linked: any[] = [];
+  let insideLink = 0;
+
+  for (const token of tokens) {
+    if (token.type === "link_open") {
+      insideLink += 1;
+      linked.push(token);
+      continue;
+    }
+    if (token.type === "link_close") {
+      insideLink = Math.max(insideLink - 1, 0);
+      linked.push(token);
+      continue;
+    }
+    if (token.type !== "text" || insideLink > 0) {
+      linked.push(token);
+      continue;
+    }
+
+    const parts = splitLocalMarkdownPaths(token.content);
+    if (parts.every((part) => typeof part === "string")) {
+      linked.push(token);
+      continue;
+    }
+
+    for (const part of parts) {
+      if (typeof part === "string") {
+        if (!part) continue;
+        const text = new Token("text", "", 0);
+        text.content = part;
+        linked.push(text);
+        continue;
+      }
+
+      const open = new Token("link_open", "a", 1);
+      open.attrs = [["href", normalizeLocalMarkdownHref(part.path, baseDir)]];
+      const label = new Token("text", "", 0);
+      label.content = part.path;
+      const close = new Token("link_close", "a", -1);
+      linked.push(open, label, close);
+      if (part.trailing) {
+        const trailing = new Token("text", "", 0);
+        trailing.content = part.trailing;
+        linked.push(trailing);
+      }
+    }
+  }
+
+  return linked;
+}
+
+function splitLocalMarkdownPaths(text: string): LocalMarkdownPathPart[] {
+  const pattern = /((?:\/[^\s<>()\]]+|(?:\.{1,2}\/)?[A-Za-z0-9._@-][^\s<>()\]]*?)\.(?:md|markdown)(?::\d+(?::\d+)?)?)([:.,;!?)]?)(?=\s|$)/gi;
+  const parts: LocalMarkdownPathPart[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    const rawPath = match[1];
+    const trailing = match[2] || "";
+    const before = text.slice(0, index);
+    if (/https?:\/\/\S*$/i.test(before)) continue;
+    if (index > lastIndex) parts.push(text.slice(lastIndex, index));
+    parts.push({ path: rawPath, trailing });
+    lastIndex = index + rawPath.length + trailing.length;
+  }
+
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts.length ? parts : [text];
+}
+
+function resolveLocalMarkdownReference(href: string, baseDir: string): { absolute: string; hash?: string } | undefined {
+  const [pathPart, hashPart] = href.split("#", 2);
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(pathPart);
+  } catch {
+    decodedPath = pathPart;
+  }
+
+  const match = decodedPath.match(/^(.+\.(?:md|markdown))(?::(\d+)(?::\d+)?)?$/i);
+  if (!match) return undefined;
+
+  const filePath = match[1];
+  const line = match[2];
+  if (![ ".md", ".markdown" ].includes(extname(filePath).toLowerCase())) return undefined;
+
+  return {
+    absolute: isAbsolute(filePath) ? filePath : resolve(baseDir, filePath),
+    hash: hashPart || (line ? `L${line}` : undefined),
+  };
 }
 
 async function collectRolloutFiles(dir = codexSessionsDir()): Promise<string[]> {
@@ -883,6 +978,50 @@ function css(): string {
     }`;
 }
 
+async function renderLocalFileResponse(
+  absolute: string,
+  originalHref: string,
+  previewCwd: string,
+): Promise<Response> {
+  try {
+    const content = await readFile(absolute, "utf8");
+    const fileExt = extname(absolute).toLowerCase();
+    const rendered =
+      fileExt === ".md" || fileExt === ".markdown"
+        ? renderMarkdownDocumentHtml(content, dirname(absolute))
+        : `<pre><code>${escapeHtml(content)}</code></pre>`;
+    return new Response(chrome(absolute.split("/").pop() || "File", `<article class="message"><div class="markdown-body">${rendered}</div></article>`, absolute), {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  } catch (error) {
+    const exists = existsSync(absolute);
+    const details = `<article class="message"><div class="markdown-body">
+      <h2>Unable to open file</h2>
+      <table>
+        <tbody>
+          <tr><th>Original href</th><td><code>${escapeHtml(originalHref)}</code></td></tr>
+          <tr><th>Resolved path</th><td><code>${escapeHtml(absolute)}</code></td></tr>
+          <tr><th>Preview cwd</th><td><code>${escapeHtml(previewCwd)}</code></td></tr>
+          <tr><th>Exists</th><td><code>${exists ? "yes" : "no"}</code></td></tr>
+          <tr><th>Error</th><td><code>${escapeHtml(error instanceof Error ? error.message : String(error))}</code></td></tr>
+        </tbody>
+      </table>
+    </div></article>`;
+    return new Response(chrome("Unable to Open File", details, absolute), {
+      status: 404,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+}
+
+function decodeRequestPathname(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+}
+
 async function main() {
   const options = parseArgs();
   const sessionPath = await resolveSessionPath(options);
@@ -918,29 +1057,21 @@ async function main() {
       }
       if (requestUrl.pathname === "/file") {
         const path = requestUrl.searchParams.get("path");
+        const originalHref = requestUrl.searchParams.get("href") || path || "";
         if (!path) return new Response("Missing path", { status: 400 });
-        try {
-          const absolute = resolve(path);
-          const content = await readFile(absolute, "utf8");
-          const fileExt = extname(absolute).toLowerCase();
-          const rendered =
-            fileExt === ".md" || fileExt === ".markdown"
-              ? renderMarkdownDocumentHtml(content, resolve(absolute, ".."))
-              : `<pre><code>${escapeHtml(content)}</code></pre>`;
-          return new Response(chrome(absolute.split("/").pop() || "File", `<article class="message"><div class="markdown-body">${rendered}</div></article>`, absolute), {
-            headers: { "content-type": "text/html; charset=utf-8" },
-          });
-        } catch (error) {
-          return new Response(chrome("Unable to Open File", `<div class="status">${escapeHtml(error instanceof Error ? error.message : String(error))}</div>`, path), {
-            status: 404,
-            headers: { "content-type": "text/html; charset=utf-8" },
-          });
-        }
+        const parsed = resolveLocalMarkdownReference(path, options.projectDir);
+        const absolute = parsed?.absolute || resolve(path);
+        return renderLocalFileResponse(absolute, originalHref, options.projectDir);
       }
       if (requestUrl.pathname === "/" || requestUrl.pathname === "/index.html") {
         return new Response(appHtml(options.pollMs), {
           headers: { "content-type": "text/html; charset=utf-8" },
         });
+      }
+      const directPath = decodeRequestPathname(requestUrl.pathname);
+      const directFile = resolveLocalMarkdownReference(directPath, options.projectDir);
+      if (directFile) {
+        return renderLocalFileResponse(directFile.absolute, directPath, options.projectDir);
       }
       return new Response("Not found", { status: 404 });
     },

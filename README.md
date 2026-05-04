@@ -259,18 +259,21 @@ clivp
 ```
 
 This finds the active Codex rollout from `CODEX_THREAD_ID`, serves it on the
-first free localhost port starting at `4777`, and opens it in the CMUX split
-browser for the launching workspace. Clicking local `.md` paths or Markdown
-links in the rendered chat opens those files as rendered documents in the
-browser split.
+first free localhost port starting at `4777`, and registers it with the CMUX
+workspace preview manager. Each workspace gets one browser preview pane; when
+you run `clivp` in multiple chats in that workspace, the pane automatically
+switches to the active registered chat. Clicking local `.md` paths or Markdown
+links in the rendered chat opens those files as rendered documents.
 
 The command is tmux-managed, so you can inspect and stop running previews:
 
 ```sh
 clivp list
 clivp stop
+clivp stop-workspace
 clivp stop-all
 clivp logs
+clivp workspace-logs
 ```
 
 Agent prompt template:

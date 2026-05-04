@@ -115,10 +115,10 @@ The server:
 - runs under a per-thread tmux session so previews can be listed and stopped
 - serves a live Markdown-rendered chat preview on the first free localhost port
   starting at `4777`
-- opens the preview in the launching CMUX workspace using `CMUX_WORKSPACE_ID`
-  and `CMUX_SURFACE_ID` when CMUX is available
+- registers the preview with one CMUX workspace manager, which opens or reuses
+  a single browser pane and switches it to the active registered chat
 - rewrites local `.md` file paths and Markdown links in the rendered chat so
-  clicking them opens a rendered document view in the browser split
+  clicking them opens a rendered document view without touching code blocks
 
 Useful options:
 
@@ -128,5 +128,7 @@ clivp start --session /path/to/rollout.jsonl
 clivp start --project-dir "$PWD"
 clivp list
 clivp stop
+clivp stop-workspace
 clivp stop-all
+clivp workspace-logs
 ```
